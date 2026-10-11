@@ -44,7 +44,7 @@ cited here still exists. Formerly docs/parity.md.
 | P. Enhance (ENH) | 0 | 0 | 2 | 0 | — | — |
 | Q. HDR (HDR) | 2 | 3 | 0 | 0 | — | — |
 | R. Video (VID) | 0 | 0 | 5 | 1 | — | 0/2 (0%) |
-| S. Export (EXP) | 15 | 2 | 1 | 0 | 7/7 (100%) | 7/7 (100%) |
+| S. Export (EXP) | 14 | 3 | 1 | 0 | 7/7 (100%) | 7/7 (100%) |
 | T. Share (SHARE) | 0 | 0 | 0 | 4 | — | — |
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 6 | 2 | 2 | 2 | 1/1 (100%) | 4/5 (80%) |
@@ -53,9 +53,9 @@ cited here still exists. Formerly docs/parity.md.
 | Y. Menus | 82 | 0 | 4 | 8 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 75 | 3 | 3 | 1 | 49/52 (94%) | 23/24 (96%) |
 | Lightroom Classic extras | 33 | 15 | 35 | 9 | — | 23/25 (92%) |
-| **Total** | 397 | 49 | 73 | 36 | 192/200 (96%) | 143/155 (92%) |
+| **Total** | 396 | 50 | 73 | 36 | 192/200 (96%) | 143/155 (92%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **81.2%** of 519 in-scope rows — P0 98.0% of 200 · P1 95.2% of 155 · P2 47.2% of 163.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **81.1%** of 519 in-scope rows — P0 98.0% of 200 · P1 95.2% of 155 · P2 46.9% of 163.
 <!-- /parity:summary -->
 
 ## Top gaps and shortcut notes
@@ -398,7 +398,7 @@ differences and missing bindings are in [ui-parity.md](ui-parity.md#shortcuts).
 | LR-EXP-DNGOPT | DNG options | P2 | 🟡 | `cmd:app.export` (`dngCompression`), `crates/engine/src/export.rs` | compression: lossless JPEG (default), ZIP or none; no embedded JPEG preview size, no lossy DNG output |
 | LR-EXP-ORIGINAL | Original + XMP | P1 | ✅ | `cmd:app.export` (`format: original`), `crates/engine/src/tests_export.rs` | file copied byte for byte, sidecar named after the output and subject to the conflict policy |
 | LR-EXP-PHOTOS | Export to the system photo library | P2 | ⬜ | | |
-| LR-EXP-PSD | Round trip to an external editor | P2 | ✅ | `cmd:photo.editExternal`, `cmd:photo.editInExternal`, `crates/engine/src/cmd/convert.rs` | a 16-bit TIFF `-Edit` copy with the edits (Adobe RGB / ProPhoto / P3 / sRGB) next to the original, added stacked on top of it and opened in the editor set in Settings ▸ General (or the system default); always a new copy (`-Edit-2`…), also when its bytes equal an earlier copy's; a copy that can't be added is removed again |
+| LR-EXP-PSD | Round trip to an external editor | P2 | 🟡 | `cmd:photo.editExternal`, `cmd:photo.editInExternal`, `crates/engine/src/cmd/convert.rs` | a 16-bit TIFF `-Edit` copy with the edits (Adobe RGB / ProPhoto / P3 / sRGB) next to the original, added stacked on top of it and opened in the editor set in Settings ▸ General (or the system default); always a new copy (`-Edit-2`…), also when its bytes equal an earlier copy's; a copy that can't be added is removed again. Missing: the Edit Photo choices (a copy without the adjustments, the original itself; only a copy with the adjustments is made), PSD, 8-bit, resolution and compression options (always a 16-bit Deflate TIFF at 240 ppi), named editor presets (one editor in Settings), more than one photo at a time; the copy is re-read only when the window regains focus in the session that made it (not after a restart, and not a file the editor saved under another name or format); an editor that saves flat files through Save As, as PhotoCraft does, has to be pointed at the same TIFF again |
 
 ## T. Share (SHARE)
 

@@ -2,6 +2,18 @@
 
 ## 2026-10-11
 
+### Edit in PhotoCraft
+- Photo ▸ Edit in PhotoCraft, and the same on right-click (issue #918): LightCraft finds the PhotoCraft installed on
+  this computer, renders a 16-bit TIFF copy with your edits, stacks it with the original and opens it there. There
+  is nothing to set up in Settings. Back in LightCraft the copy shows what you saved.
+- PhotoCraft is looked for before anything is rendered: when it isn't installed you are told so, and no copy is
+  made. Found are an installed PhotoCraft on Windows (also in a folder with non-English characters) and macOS, and
+  `photocraft` on the `PATH` on Linux and Windows. A Flatpak or a portable copy elsewhere is not: put its program
+  in Settings ▸ General ▸ External Editor and use Edit in External Editor.
+- With a PhotoCraft that supports it, File ▸ Save there writes straight back to the copy (no Save As), layers
+  included. On macOS, and with an older PhotoCraft, Save still asks where to save: keep the suggested file.
+- Checked on Windows; the macOS and Linux paths are untested.
+
 ### Edit in External Editor
 - Right-click a photo ▸ Edit in External Editor (issue #918): the command was in the Photo menu (⇧⌘E) only, so it
   looked missing. It renders a 16-bit TIFF copy with your edits, stacks it with the original and opens it in the

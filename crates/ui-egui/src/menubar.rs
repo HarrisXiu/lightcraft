@@ -184,6 +184,9 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "@Stack",
             "@Photo Merge",
             "---",
+            "photo.editInPhotoCraft",
+            "photo.editInExternal",
+            "---",
             "develop.auto",
             "develop.treatment",
             "develop.reset",
@@ -275,6 +278,7 @@ fn host_supports(app: &LightcraftApp, id: &str) -> bool {
     match id {
         "file.backupLibrary" => app.services.backup_library.is_some(),
         "file.restoreLibrary" => app.services.restore_library.is_some(),
+        "photo.editInPhotoCraft" => app.services.photocraft.is_some(),
         "photo.restore" | "photo.deletePermanently" => selection_deleted(app),
         "photo.delete" => !selection_deleted(app),
         // only where the trash is on screen

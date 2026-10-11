@@ -426,6 +426,8 @@
   "Edit Smart Album…": "Modifier l'album intelligent…",
   "Edit Spot": "Modifier la tache",
   "Edit in External Editor": "Modifier dans l'éditeur externe",
+  "Edit in PhotoCraft": "Modifier dans PhotoCraft",
+  "PhotoCraft wasn't found on this computer. Install it, or set its program in Settings → General → External Editor and use Edit in External Editor.": "PhotoCraft est introuvable sur cet ordinateur. Installez-le, ou indiquez son programme dans Réglages → Général → Éditeur externe et utilisez Modifier dans l'éditeur externe.",
   "Edit settings copied": "Réglages de retouche copiés",
   "Edited": "Retouchée",
   "Edited or not": "Retouchées ou non",

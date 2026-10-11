@@ -119,6 +119,9 @@ pub type RevealFn = Box<dyn FnMut(&str) -> Result<(), String>>;
 pub type OpenUrlFn = Box<dyn FnMut(&str) -> Result<(), String>>;
 /// Open a file in an application (`app` = "" for the system's default one).
 pub type OpenWithFn = Box<dyn FnMut(&str, &str) -> Result<(), String>>;
+/// Edit in PhotoCraft: `None` asks whether PhotoCraft is installed (`Err` = why it can't be
+/// started), `Some(file)` opens that file in it.
+pub type PhotoCraftFn = Box<dyn FnMut(Option<&str>) -> Result<(), String>>;
 /// Something the host does with the session (web: back up or restore the library in browser
 /// storage); the work may finish asynchronously.
 pub type HostAction = Box<dyn FnMut(&mut Session) -> Result<Value, String>>;
@@ -170,6 +173,8 @@ pub struct Services {
     pub open_url: Option<OpenUrlFn>,
     /// Open a file in an external editor (Edit in External Editor; desktop only).
     pub open_with: Option<OpenWithFn>,
+    /// Find PhotoCraft and open a file in it (Edit in PhotoCraft; desktop only).
+    pub photocraft: Option<PhotoCraftFn>,
     /// File ▸ Back Up Library…: save the whole library (catalog and originals) as one file the
     /// user keeps (web only: there the library lives in browser storage, which the browser may
     /// clear; on the desktop it is a folder backed up like any other).

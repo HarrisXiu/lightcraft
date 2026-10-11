@@ -432,6 +432,8 @@
   "Edit Smart Album…": "編輯智慧型相簿…",
   "Edit Spot": "編輯斑點",
   "Edit in External Editor": "在外部編輯器中編輯",
+  "Edit in PhotoCraft": "在 PhotoCraft 中編輯",
+  "PhotoCraft wasn't found on this computer. Install it, or set its program in Settings → General → External Editor and use Edit in External Editor.": "在這部電腦上找不到 PhotoCraft。請先安裝，或在「設定 → 一般 → 外部編輯器」填入它的程式路徑，然後使用「在外部編輯器中編輯」。",
   "Edit settings copied": "已複製編輯設定",
   "Edited": "已編輯",
   "Edited or not": "不限是否編輯",

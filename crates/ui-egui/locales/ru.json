@@ -360,6 +360,8 @@
   "Edit Smart Album…": "Изменить смарт-альбом…",
   "Edit Spot": "Изменить пятно",
   "Edit in External Editor": "Править во внешнем редакторе",
+  "Edit in PhotoCraft": "Править в PhotoCraft",
+  "PhotoCraft wasn't found on this computer. Install it, or set its program in Settings → General → External Editor and use Edit in External Editor.": "PhotoCraft не найден на этом компьютере. Установите его или укажите его программу в разделе Настройки → Общие → Внешний редактор и используйте команду «Править во внешнем редакторе».",
   "Edited": "Изменено",
   "Effect": "Эффект",
   "Effects": "Эффекты",

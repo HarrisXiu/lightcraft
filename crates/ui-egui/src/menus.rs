@@ -154,6 +154,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("dialog.export", "Export…", None, "File"),
     ("dialog.contactSheet", "Contact Sheet PDF…", None, "File"),
     ("app.contactSheet", "Export Contact Sheet PDF", None, ""),
+    ("photo.editInPhotoCraft", "Edit in PhotoCraft", None, "Photo"),
     ("photo.editInExternal", "Edit in External Editor", Some("Cmd+Shift+E"), "Photo"),
     ("dialog.mergeHdr", "HDR…", Some("Ctrl+H"), "Photo>Photo Merge"),
     ("dialog.mergePanorama", "Panorama…", Some("Ctrl+M"), "Photo>Photo Merge"),
@@ -1033,32 +1034,24 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(Value::Null)
         }
         "photo.editInExternal" => {
-            // render an edit copy (stacked on the original), then open it in the editor
-            let mut params = p.clone();
-            if !params.is_object() {
-                params = json!({});
-            }
-            let r = match app.session.execute("photo.editExternal", &params) {
-                Ok(r) => r,
-                Err(e) => {
-                    // the menus and the shortcut drop a command's error: say why there is no copy
-                    let e = e.to_string();
-                    app.toast_error(&ctx, e.clone());
-                    return Some(Err(e));
-                }
-            };
-            let path = r["path"].as_str().unwrap_or_default().to_string();
-            if let Some(id) = r["id"].as_u64() {
-                app.ui.external_edits.push(id);
-            }
             let editor = p.get("app").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| app.ui.settings.external_editor.clone());
-            let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-            // one toast shows at a time: a launch that failed must not read as "opened"
-            match app.services.open_with.as_mut().map(|f| f(&path, &editor)) {
-                Some(Err(e)) => app.toast_error(&ctx, crate::i18n::tr_format!("Couldn't open the editor: {e}", e = e)),
-                _ => app.toast(&ctx, crate::i18n::tr_format!("{name} opened for editing; it is stacked with the original", name = name)),
+            edit_copy_in(app, &ctx, p, |app, path| app.services.open_with.as_mut().map(|open| open(path, &editor)))
+        }
+        "photo.editInPhotoCraft" => {
+            // looked for before rendering: no copy is made for an editor that isn't there
+            let found = match app.services.photocraft.as_mut() {
+                Some(photocraft) => photocraft(None),
+                None => return Some(Err("PhotoCraft can't be started from here".into())),
+            };
+            if let Err(why) = found {
+                log::info!("Edit in PhotoCraft: {why}");
+                let text = crate::i18n::tr(
+                    "PhotoCraft wasn't found on this computer. Install it, or set its program in Settings → General → External Editor and use Edit in External Editor.",
+                );
+                app.toast_error(&ctx, text);
+                return Some(Err(format!("{text} ({why})")));
             }
-            Ok(r)
+            edit_copy_in(app, &ctx, p, |app, path| app.services.photocraft.as_mut().map(|photocraft| photocraft(Some(path))))
         }
         "dialog.cull" => {
             app.ui.dialog = Some(Dialog::Cull { reject_below: 0.0, pick_best: true });
@@ -1601,8 +1594,40 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
     Some(r)
 }
 
+/// Edit in External Editor and Edit in PhotoCraft: render the edit copy (stacked on the original),
+/// then hand its file to `open`, which starts the editor (`None`: this host can't start one).
+fn edit_copy_in(
+    app: &mut LightcraftApp,
+    ctx: &egui::Context,
+    p: &Value,
+    open: impl FnOnce(&mut LightcraftApp, &str) -> Option<Result<(), String>>,
+) -> Result<Value, String> {
+    let params = if p.is_object() { p.clone() } else { json!({}) };
+    let r = match app.session.execute("photo.editExternal", &params) {
+        Ok(r) => r,
+        Err(e) => {
+            // the menus and the shortcut drop a command's error: say why there is no copy
+            let e = e.to_string();
+            app.toast_error(ctx, e.clone());
+            return Err(e);
+        }
+    };
+    let path = r["path"].as_str().unwrap_or_default().to_string();
+    if let Some(id) = r["id"].as_u64() {
+        app.ui.external_edits.push(id);
+    }
+    let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    // one toast shows at a time: a launch that failed must not read as "opened"
+    match open(app, &path) {
+        Some(Err(e)) => app.toast_error(ctx, crate::i18n::tr_format!("Couldn't open the editor: {e}", e = e)),
+        _ => app.toast(ctx, crate::i18n::tr_format!("{name} opened for editing; it is stacked with the original", name = name)),
+    }
+    Ok(r)
+}
+
 pub fn ui_enabled(app: &LightcraftApp, id: &str) -> bool {
     match id {
+        "photo.editInPhotoCraft" => app.services.photocraft.is_some() && app.session.active().is_some(),
         "dialog.contactSheet" | "app.contactSheet" => !cfg!(target_arch = "wasm32") && app.session.active().is_some() && app.export.is_none(),
         s if s.starts_with("panel.") || s.starts_with("tool.") || s.starts_with("section.") => app.session.active().is_some() || s == "panel.close",
         "app.export" | "dialog.export" | "dialog.createPreset" | "dialog.rename" | "dialog.captureTime" | "dialog.copySettings" => {

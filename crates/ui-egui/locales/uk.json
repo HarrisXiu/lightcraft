@@ -667,6 +667,8 @@
   "Edit Smart Album…": "Редагувати смарт-альбом…",
   "Edit Spot": "Редагувати ділянку",
   "Edit in External Editor": "Редагувати в зовнішньому редакторі",
+  "Edit in PhotoCraft": "Редагувати в PhotoCraft",
+  "PhotoCraft wasn't found on this computer. Install it, or set its program in Settings → General → External Editor and use Edit in External Editor.": "PhotoCraft не знайдено на цьому комп’ютері. Установіть його або вкажіть його програму в розділі Налаштування → Загальні → Зовнішній редактор і скористайтеся командою «Редагувати в зовнішньому редакторі».",
   "Edit settings copied": "Налаштування редагування скопійовано",
   "Edited": "Відредаговано",
   "Edited or not": "Відредаговано чи ні",

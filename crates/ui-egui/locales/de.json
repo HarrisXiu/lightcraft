@@ -455,6 +455,8 @@
   "Edit Smart Album…": "Smart-Album bearbeiten…",
   "Edit Spot": "Retuschierstelle bearbeiten",
   "Edit in External Editor": "In externem Editor bearbeiten",
+  "Edit in PhotoCraft": "In PhotoCraft bearbeiten",
+  "PhotoCraft wasn't found on this computer. Install it, or set its program in Settings → General → External Editor and use Edit in External Editor.": "PhotoCraft wurde auf diesem Computer nicht gefunden. Installiere es oder trage sein Programm unter Einstellungen → Allgemein → Externer Editor ein und verwende „In externem Editor bearbeiten“.",
   "Edit in External Editor (⇧⌘E): a 16-bit TIFF copy, stacked, refreshed when you come back.": "In externem Editor bearbeiten mit ⇧⌘E: Eine 16-Bit-TIFF-Kopie wird gestapelt und bei der Rückkehr aktualisiert.",
   "Edit settings copied": "Bearbeitungseinstellungen kopiert",
   "Edited": "Bearbeitet",

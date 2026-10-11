@@ -28,6 +28,7 @@ mod dialog_filter;
 mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
+mod photocraft;
 
 use dialog_filter::FileDialogExt as _;
 use lightcraft_engine::Session;
@@ -445,6 +446,24 @@ fn services(ctx: egui::Context, log_file: Option<&std::path::Path>) -> Services 
             };
             c.arg(path).spawn().map(|_| ()).map_err(|e| e.to_string())
         })),
+        // `None` asks whether PhotoCraft is installed, a file opens it there: in the PhotoCraft
+        // the question just found, when there was one
+        photocraft: Some({
+            let mut found = None;
+            Box::new(move |file: Option<&str>| match file {
+                Some(file) => {
+                    let photocraft = match found.take() {
+                        Some(photocraft) => photocraft,
+                        None => photocraft::find()?,
+                    };
+                    photocraft::open_in(&photocraft, file)
+                }
+                None => {
+                    found = Some(photocraft::find()?);
+                    Ok(())
+                }
+            })
+        }),
         open_url: Some(Box::new(|url: &str| {
             if !url.starts_with("https://") {
                 return Err("only https links are opened".into());

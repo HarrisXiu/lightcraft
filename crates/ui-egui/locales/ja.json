@@ -412,6 +412,8 @@
   "Edit Smart Album…": "スマートアルバムを編集…",
   "Edit Spot": "スポットを編集",
   "Edit in External Editor": "外部エディターで編集",
+  "Edit in PhotoCraft": "PhotoCraftで編集",
+  "PhotoCraft wasn't found on this computer. Install it, or set its program in Settings → General → External Editor and use Edit in External Editor.": "このコンピューターにPhotoCraftが見つかりませんでした。インストールするか、「設定 → 一般 → 外部エディター」にプログラムを指定して「外部エディターで編集」を使ってください。",
   "Edit settings copied": "編集設定をコピーしました",
   "Edited": "編集済み",
   "Edited or not": "編集の有無を問わない",

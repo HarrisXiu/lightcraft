@@ -934,6 +934,152 @@ fn a_failed_editor_launch_is_reported() {
     h.settle(SETTLE);
 }
 
+/// Edit in PhotoCraft (#918) looks for PhotoCraft before it renders anything: when there is none
+/// to start, no copy is made, and the toast says what to do.
+#[test]
+fn edit_in_photocraft_makes_no_copy_when_it_is_not_installed() {
+    let dir = std::env::temp_dir().join(format!("lc-ui-pc-none-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let asked: std::sync::Arc<std::sync::Mutex<Vec<Option<String>>>> = Default::default();
+    let a = asked.clone();
+    let services = Services {
+        png: None,
+        photocraft: Some(Box::new(move |file: Option<&str>| {
+            a.lock().unwrap().push(file.map(str::to_string));
+            Err("PhotoCraft was not found".to_string())
+        })),
+        ..Default::default()
+    };
+    let app = LightcraftApp::new(lightcraft_engine::Session::with_demo().with_fs(), services);
+    let mut h = Headless::new(app, [1200.0, 800.0], 1.0);
+    let (photos, active) = (h.app.session.catalog.len(), h.app.session.active());
+    let r = h.request("engine.execute", json!({"command": "photo.editInPhotoCraft", "params": {"dir": dir.to_string_lossy()}}), T);
+    assert_eq!(r["ok"], false, "{r}");
+    assert!(r["error"].as_str().is_some_and(|e| e.contains("PhotoCraft was not found")), "the reason reaches an agent: {r}");
+    let toast = h.app.ui.toast.clone().expect("toast").0;
+    assert!(toast.contains("PhotoCraft wasn't found") && toast.contains("External Editor"), "{toast}");
+    assert_eq!(asked.lock().unwrap().clone(), vec![None], "asked whether it is there, never to open a file");
+    assert_eq!((h.app.session.catalog.len(), h.app.session.active()), (photos, active), "no copy in the library");
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0, "and none on disk");
+    assert!(h.app.ui.external_edits.is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+    h.settle(SETTLE);
+}
+
+/// Edit in PhotoCraft hands the edit copy to PhotoCraft (not to the editor in Settings), tracks
+/// it for the reload, and reports a launch that fails.
+#[test]
+fn edit_in_photocraft_opens_the_copy_there() {
+    let dir = std::env::temp_dir().join(format!("lc-ui-pc-open-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let asked: std::sync::Arc<std::sync::Mutex<Vec<Option<String>>>> = Default::default();
+    let fail = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (a, f) = (asked.clone(), fail.clone());
+    let services = Services {
+        png: None,
+        open_with: Some(Box::new(|_: &str, _: &str| Err("the editor in Settings must not be used".to_string()))),
+        photocraft: Some(Box::new(move |file: Option<&str>| {
+            a.lock().unwrap().push(file.map(str::to_string));
+            if file.is_some() && f.load(std::sync::atomic::Ordering::SeqCst) { Err("access denied".to_string()) } else { Ok(()) }
+        })),
+        ..Default::default()
+    };
+    let app = LightcraftApp::new(lightcraft_engine::Session::with_demo().with_fs(), services);
+    let mut h = Headless::new(app, [1200.0, 800.0], 1.0);
+    h.app.ui.settings.external_editor = "SomeOtherEditor".into();
+    let original = h.app.session.active().expect("active photo");
+    let r = h.request("engine.execute", json!({"command": "photo.editInPhotoCraft", "params": {"dir": dir.to_string_lossy()}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    let calls = asked.lock().unwrap().clone();
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(calls[0], None, "first: is it there?");
+    let path = calls[1].clone().expect("then the file");
+    assert!(path.ends_with("-Edit.tif") && std::path::Path::new(&path).exists(), "{path}");
+    assert_eq!(r["result"]["path"], json!(path));
+    let copy = r["result"]["id"].as_u64().unwrap();
+    assert_eq!(h.app.ui.external_edits, vec![copy], "re-read when the window is focused again");
+    let toast = h.app.ui.toast.clone().expect("toast").0;
+    assert!(toast.contains("opened for editing"), "{toast}");
+
+    // found, but it could not be started: the copy stays and the toast says why
+    fail.store(true, std::sync::atomic::Ordering::SeqCst);
+    exec(&mut h, "library.select", json!({"ids": [original.0]}));
+    let r = h.request("engine.execute", json!({"command": "photo.editInPhotoCraft", "params": {"dir": dir.to_string_lossy()}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    let toast = h.app.ui.toast.clone().expect("toast").0;
+    assert!(toast.contains("access denied") && !toast.contains("opened for editing"), "{toast}");
+    let _ = std::fs::remove_dir_all(&dir);
+    h.settle(SETTLE);
+}
+
+/// Where the host can start PhotoCraft, the Photo menu and the photo context menu offer Edit in
+/// PhotoCraft above Edit in External Editor; where it can't (the web, tests without the service)
+/// the item is left out. The context-menu item runs it on the photo that was right-clicked.
+#[test]
+fn edit_in_photocraft_is_in_the_photo_menus_where_it_can_run() {
+    let photo_items = |app: &LightcraftApp| -> Vec<String> {
+        let bar = crate::menubar::menu_bar(app);
+        let items = &bar.iter().find(|(title, _)| title == "Photo").expect("Photo menu").1;
+        items.iter().filter_map(|n| if let crate::menubar::MenuNode::Item { id, .. } = n { Some(id.clone()) } else { None }).collect()
+    };
+    let without = LightcraftApp::new(lightcraft_engine::Session::with_demo(), Services { png: None, ..Default::default() });
+    let items = photo_items(&without);
+    assert!(!items.contains(&"photo.editInPhotoCraft".to_string()) && items.contains(&"photo.editInExternal".to_string()), "{items:?}");
+    assert!(!crate::menus::ui_enabled(&without, "photo.editInPhotoCraft"));
+
+    let dir = std::env::temp_dir().join(format!("lc-ui-pc-menu-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut session = lightcraft_engine::Session::with_demo().with_fs();
+    let mut ids = Vec::new();
+    for (name, colour) in [("flower.png", [200, 120, 40, 255]), ("leaf.png", [40, 120, 200, 255])] {
+        let img = lightcraft_raster::Rgba8 { width: 16, height: 12, data: vec![colour; 16 * 12] };
+        let png = lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default()).unwrap();
+        let file = dir.join(name);
+        std::fs::write(&file, png).unwrap();
+        let r = session.execute("library.import", &json!({"paths": [file.to_string_lossy()]})).unwrap();
+        ids.push(r["imported"][0].as_u64().expect("imported"));
+    }
+    let opened: std::sync::Arc<std::sync::Mutex<Vec<String>>> = Default::default();
+    let o = opened.clone();
+    let services = Services {
+        png: None,
+        open_with: Some(Box::new(|_: &str, _: &str| Ok(()))),
+        photocraft: Some(Box::new(move |file: Option<&str>| {
+            o.lock().unwrap().extend(file.map(str::to_string));
+            Ok(())
+        })),
+        ..Default::default()
+    };
+    let mut h = Headless::new(LightcraftApp::new(session, services), [1200.0, 800.0], 1.0);
+    let items = photo_items(&h.app);
+    let at = |id: &str| items.iter().position(|i| i == id).unwrap_or_else(|| panic!("{id} in {items:?}"));
+    assert_eq!(at("photo.editInPhotoCraft") + 1, at("photo.editInExternal"), "{items:?}");
+    assert!(crate::menus::ui_enabled(&h.app, "photo.editInPhotoCraft"));
+
+    // both selected, the other one active: the copy is of the photo that was right-clicked
+    exec(&mut h, "library.select", json!({"ids": [ids[0], ids[1]], "active": ids[1]}));
+    let r = h.request("ui.set", json!({"view": "detail"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let r = h.request("ui.clickWidget", json!({"id": format!("film:{}", ids[0]), "button": "right"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let top = |h: &Headless, id: &str| {
+        h.app.widgets.iter().find(|(w, _)| w == id).map(|(_, r)| r.top()).unwrap_or_else(|| panic!("{id} in the context menu"))
+    };
+    assert!(top(&h, "ctx:photo.editInPhotoCraft") < top(&h, "ctx:photo.editInExternal"), "PhotoCraft first");
+    let r = h.request("ui.clickWidget", json!({"id": "ctx:photo.editInPhotoCraft"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let calls = opened.lock().unwrap().clone();
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert!(calls[0].ends_with("flower-Edit.tif") && std::path::Path::new(&calls[0]).exists(), "{calls:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The photo context menu has Edit in External Editor (#918: it was in the Photo menu only).
 #[test]
 fn the_photo_context_menu_edits_in_the_external_editor() {

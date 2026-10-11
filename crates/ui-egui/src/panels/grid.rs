@@ -1005,14 +1005,18 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         let _ = app.run("app.showInFinder", json!({}));
     }
     // (not on the web: there is no editor to hand the copy to)
-    if app.services.open_with.is_some() {
-        let r = ui.button(crate::i18n::tr("Edit in External Editor"));
-        register(ui.ctx(), "ctx:photo.editInExternal", r.rect);
+    let editors = [
+        ("photo.editInPhotoCraft", "Edit in PhotoCraft", app.services.photocraft.is_some()),
+        ("photo.editInExternal", "Edit in External Editor", app.services.open_with.is_some()),
+    ];
+    for (command, label, _) in editors.into_iter().filter(|(_, _, offered)| *offered) {
+        let r = ui.button(crate::i18n::tr(label));
+        register(ui.ctx(), format!("ctx:{command}"), r.rect);
         if r.clicked() {
             // the copy is of this photo, also when another selected photo is the active one
             let ids: Vec<u64> = app.session.selection.ids.iter().map(|i| i.0).collect();
             let _ = app.run("library.select", json!({"ids": ids, "active": id.0}));
-            let _ = app.run("photo.editInExternal", json!({}));
+            let _ = app.run(command, json!({}));
         }
     }
     if ui.button(crate::i18n::tr("Export…")).clicked() {

@@ -1938,7 +1938,15 @@ fn edit_in(app: &mut LightcraftApp, ctx: &egui::Context, p: &Value, photocraft: 
             o.insert(k.clone(), v.clone());
         }
     }
-    let r = app.session.execute("photo.editExternal", &params).map_err(|e| e.to_string())?;
+    let r = match app.session.execute("photo.editExternal", &params) {
+        Ok(r) => r,
+        Err(e) => {
+            // the menus and the shortcut drop a command's error: say why there is no copy
+            let e = e.to_string();
+            app.toast_error(ctx, e.clone());
+            return Err(e);
+        }
+    };
     let path = r["path"].as_str().unwrap_or_default().to_string();
     if let Some(id) = r["id"].as_u64() {
         app.ui.external_edits.push(id);

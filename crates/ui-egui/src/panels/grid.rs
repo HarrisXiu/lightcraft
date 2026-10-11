@@ -910,14 +910,19 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     // Photo ▸ Edit In: a copy with this photo's edits, opened in PhotoCraft or another editor
     // (desktop only: the web can't start programs)
     ui.add_enabled_ui(crate::menus::ui_enabled(app, "photo.editInPhotoCraft"), |ui| {
-        ui.menu_button(crate::i18n::tr("Edit In"), |ui| {
-            if ui.button(crate::i18n::tr("Edit in PhotoCraft")).clicked() {
-                let _ = app.run("photo.editInPhotoCraft", json!({}));
-            }
-            if ui.button(crate::i18n::tr("Edit in Other Editor")).clicked() {
-                let _ = app.run("photo.editInExternal", json!({}));
+        let menu = ui.menu_button(crate::i18n::tr("Edit In"), |ui| {
+            for (label, command) in [("Edit in PhotoCraft", "photo.editInPhotoCraft"), ("Edit in Other Editor", "photo.editInExternal")] {
+                let r = ui.button(crate::i18n::tr(label));
+                register(ui.ctx(), format!("ctx:{command}"), r.rect);
+                if r.clicked() {
+                    // the copy is of this photo, also when another selected photo is the active one
+                    let ids: Vec<u64> = app.session.selection.ids.iter().map(|i| i.0).collect();
+                    let _ = app.run("library.select", json!({"ids": ids, "active": id.0}));
+                    let _ = app.run(command, json!({}));
+                }
             }
         });
+        register(ui.ctx(), "ctx:editIn", menu.response.rect);
     });
     if ui.button(crate::i18n::tr("Find Similar Photos")).clicked() {
         match app.run("library.findSimilar", json!({"id": id.0})) {

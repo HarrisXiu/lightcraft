@@ -966,6 +966,20 @@ fn edit_in_external_editor_opens_the_copy() {
     assert_eq!(calls.len(), 1);
     assert!(calls[0].0.ends_with("-Edit.tif") && std::path::Path::new(&calls[0].0).exists(), "{calls:?}");
     assert_eq!(calls[0].1, "PhotoCraft");
+    let first = r["result"]["id"].as_u64().unwrap();
+    assert_eq!((h.app.ui.external_edits.clone(), h.app.session.active().map(|i| i.0)), (vec![first], Some(first)));
+    // again, on the copy itself (not edited here): its render has the copy's own bytes, and is
+    // still a new file and a new photo, the one the editor gets and the one reloaded afterwards
+    let r = h.request("engine.execute", json!({"command": "photo.editInExternal"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    let second = r["result"]["id"].as_u64().unwrap();
+    assert_ne!(second, first);
+    let calls = opened.lock().unwrap().clone();
+    assert_eq!(calls.len(), 2);
+    assert!(calls[1].0.ends_with("-Edit-Edit.tif") && std::path::Path::new(&calls[1].0).exists(), "{calls:?}");
+    assert_eq!(r["result"]["path"], json!(calls[1].0));
+    assert!(std::fs::read(&calls[0].0).unwrap() == std::fs::read(&calls[1].0).unwrap(), "the case under test: identical copies");
+    assert_eq!((h.app.ui.external_edits.clone(), h.app.session.active().map(|i| i.0)), (vec![first, second], Some(second)));
     let _ = std::fs::remove_dir_all(&dir);
     h.settle(SETTLE);
 }
@@ -1022,6 +1036,70 @@ fn edit_in_photocraft_opens_a_psd_copy() {
     assert!(crate::menus::ui_enabled(&h.app, "photo.editInPhotoCraft"));
     let _ = std::fs::remove_dir_all(&dir);
     h.settle(SETTLE);
+}
+
+/// A copy that can't be made says why: the menus, the shortcut and the context menu drop a
+/// command's error, so without the toast Edit In did nothing visible.
+#[test]
+fn edit_in_says_why_when_no_copy_can_be_made() {
+    let services = Services { png: None, open_with: Some(Box::new(|_: &str, _: &str| Ok(()))), ..Default::default() };
+    let app = LightcraftApp::new(lightcraft_engine::Session::with_demo().with_fs(), services);
+    let mut h = Headless::new(app, [1200.0, 800.0], 1.0);
+    for command in ["photo.editInExternal", "photo.editInPhotoCraft"] {
+        h.app.ui.toast = None;
+        // (a generated photo has no folder to put the copy in)
+        let r = h.request("engine.execute", json!({"command": command}), T);
+        assert_eq!(r["ok"], false, "{command}: {r}");
+        let toast = h.app.ui.toast.clone().expect("toast").0;
+        assert!(toast.contains("no folder"), "{command}: {toast}");
+    }
+    h.settle(SETTLE);
+}
+
+/// Edit In on a photo's right-click menu copies that photo, also when it is one of several
+/// selected photos and another one is the active photo (the command works on the active one).
+#[test]
+fn edit_in_from_the_context_menu_copies_the_photo_that_was_clicked() {
+    let dir = std::env::temp_dir().join(format!("lc-ui-ext-menu-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut session = lightcraft_engine::Session::with_demo().with_fs();
+    let mut ids = Vec::new();
+    for (name, colour) in [("flower.png", [200, 120, 40, 255]), ("leaf.png", [40, 120, 200, 255])] {
+        let img = lightcraft_raster::Rgba8 { width: 16, height: 12, data: vec![colour; 16 * 12] };
+        let png = lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default()).unwrap();
+        let file = dir.join(name);
+        std::fs::write(&file, png).unwrap();
+        let r = session.execute("library.import", &json!({"paths": [file.to_string_lossy()]})).unwrap();
+        ids.push(r["imported"][0].as_u64().expect("imported"));
+    }
+    let opened: std::sync::Arc<std::sync::Mutex<Vec<String>>> = Default::default();
+    let o = opened.clone();
+    let services = Services {
+        png: None,
+        open_with: Some(Box::new(move |path: &str, _: &str| {
+            o.lock().unwrap().push(path.to_string());
+            Ok(())
+        })),
+        ..Default::default()
+    };
+    let mut h = Headless::new(LightcraftApp::new(session, services), [1200.0, 800.0], 1.0);
+    // both selected, the other one active
+    exec(&mut h, "library.select", json!({"ids": [ids[0], ids[1]], "active": ids[1]}));
+    let r = h.request("ui.set", json!({"view": "detail"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    for (widget, button) in
+        [(format!("film:{}", ids[0]), "right"), ("ctx:editIn".to_string(), "left"), ("ctx:photo.editInExternal".to_string(), "left")]
+    {
+        let r = h.request("ui.clickWidget", json!({"id": widget, "button": button}), T);
+        assert_eq!(r["ok"], true, "{widget}: {r}");
+        h.settle(SETTLE);
+    }
+    let calls = opened.lock().unwrap().clone();
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert!(calls[0].ends_with("flower-Edit.tif") && std::path::Path::new(&calls[0]).exists(), "{calls:?}");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

@@ -156,6 +156,10 @@ one pixel.
   (clicks, keys, drags) has played out. Widget ids for `ui.clickWidget` come from `ui.widgets`
   (e.g. `button:upright-auto`). A 1600×1000 demo snapshot takes ~1–2 s (debug build).
 
+Local may show a folder both below Home and as a saved root. Each appearance expands independently.
+The innermost containing root keeps `folderToggle:<path>` and `source:local:<path>`; appearances in
+other trees append `:in:<root-path>` to the path. Read `ui.widgets` to address a particular appearance.
+
 ## Panel docking
 
 Library, Tools, and Presets panels can be regrouped, split, floated within the app window, closed, and reopened. Tools keeps the current Edit/Crop/Masking mode; the photo view and filmstrip stay together. The document/session view is protected. Layouts, active tabs, panel visibility, and floating rectangles are saved with the app's existing UI preferences. These operations do not edit document contents.

@@ -1,6 +1,6 @@
 # Gaps: where LightCraft falls short of Lightroom
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (created; absorbs the checklist's Top gaps and the ROADMAP's honest assessment, re-ranked after a full re-measure) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** major (created; absorbs the checklist's Top gaps and the ROADMAP's honest assessment, re-ranked after a full re-measure) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
 
 Every known shortfall, one entry each, ranked by user impact (how many Lightroom users hit it, and
 how hard it blocks them), then by effort. **Agents pick work from the top** (the first entry nobody is
@@ -59,6 +59,7 @@ Beta-blocking gaps (B) total **~230–430 h**; with the stability and platform w
 
 ## Closed recently (kept for calibration)
 
+- 2026-10-11: Local folders appearing under Home and a saved root expand independently (#893).
 - 2026-10-10: Nikon lossy-after-split NEF (#633), ORF 12.8 bpp (#651), HDR gain map / PQ AVIF / float
   TIFF export (#646), activity stack (#345).
 - 2026-10-09: HEIC in release builds (#609), Samsung uncompressed SRW (#459), contact-sheet PDF (#563),
@@ -72,6 +73,7 @@ Beta-blocking gaps (B) total **~230–430 h**; with the stability and platform w
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | patch | Fixed overlapping Local folder trees (#893); the wider Windows runtime gap remains open |
 | 2026-10-10 | minor | RAW gaps re-measured model by model (raw-parity.md): CR3, compressed ORF and verification entries carry measured shares; HE NEF no longer a beta blocker (+1.1 points for 20–40 h); verification entry absorbs the cheap per-body fixes (#769, #702, A200 series) |
 | 2026-10-10 | minor | Beta total raised to 340–600 h to include the ~92 open core-path user issues |
 | 2026-10-10 | major | Created from the checklist's Top gaps (whose items 1–2 had been duplicated by a merge) and ROADMAP's Where we stand; re-ranked; added evidence, impact, hours and beta flags; added platform-CI, lens-database, HE NEF and localization gaps |

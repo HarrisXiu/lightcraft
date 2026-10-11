@@ -2093,6 +2093,45 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A folder may appear both below an ancestor (like Home) and as a kept Local root. Both
+    /// triangles must expand independently, with distinct automation ids (issue #893).
+    #[test]
+    fn overlapping_local_trees_expand_independently() {
+        let mut h = demo([1300.0, 1400.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"leftPanel": true}), t);
+        let base = std::env::temp_dir().join(format!("lc-ui-overlap-{}", std::process::id()));
+        let photos = base.join("Photos");
+        let child = photos.join("Child");
+        std::fs::create_dir_all(&child).unwrap();
+        // Hide the real home for deterministic listings; the fixture keeps its own ancestor
+        // and descendant roots visible together, the overlap the old tests missed.
+        h.hide_home_above(&base);
+        let path = |p: &std::path::Path| p.to_string_lossy().to_string();
+        for p in [&base, &photos] {
+            assert_eq!(h.request("engine.execute", json!({"command": "local.addRoot", "params": {"path": path(p)}}), t)["ok"], true);
+        }
+        h.settle(SETTLE);
+        let toggle = |h: &mut Headless, id: String| {
+            let reply = h.request("ui.clickWidget", json!({"id": id}), t);
+            assert_eq!(reply["ok"], true, "{reply}");
+            h.settle(SETTLE);
+        };
+        toggle(&mut h, format!("folderToggle:{}", path(&base)));
+        let nested = format!("folderToggle:{}:in:{}", path(&photos), path(&base));
+        assert!(h.step_until(t, |h| h.app.widgets.iter().any(|(id, _)| id == &nested)), "ancestor's folder listing arrived");
+        let count = |h: &Headless| h.app.widgets.iter().filter(|(id, _)| id.starts_with("source:local:") && id.contains(&path(&child))).count();
+        toggle(&mut h, nested.clone());
+        assert!(h.step_until(t, |h| count(h) == 1), "opening the nested row leaves the kept root closed");
+        toggle(&mut h, format!("folderToggle:{}", path(&photos)));
+        assert!(h.step_until(t, |h| count(h) == 2), "both trees list the child");
+        let ids: Vec<_> = h.app.widgets.iter().filter(|(id, _)| id.contains(&path(&photos))).map(|(id, _)| id).collect();
+        assert_eq!(ids.iter().copied().collect::<std::collections::HashSet<_>>().len(), ids.len(), "every occurrence has its own widget id");
+        toggle(&mut h, nested);
+        assert_eq!(count(&h), 1, "collapsing the ancestor's occurrence leaves the kept root open");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
     /// Local: a kept folder stays a root while its subfolders (and other locations) are
     /// browsed — the subfolder is highlighted inside its tree, its siblings stay listed — and
     /// the kept folders survive a save/load of the UI state (a restart).

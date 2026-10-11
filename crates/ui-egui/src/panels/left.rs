@@ -373,7 +373,8 @@ fn local_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     for (i, (name, path)) in local.places.iter().enumerate() {
         let transient = local.browse_root.as_deref() == Some(path.as_str());
         let reveal = local.owner == Some(i);
-        folder_tree(app, ui, name, path, 0.0, current.as_deref(), reveal, transient);
+        let tree = LocalTree { root: path, places: &local.places };
+        folder_tree(app, ui, &tree, name, path, 0.0, current.as_deref(), reveal, transient);
     }
     if app.services.pick_folder.is_some() && row(app, ui, "local:browse", Icon::Plus, crate::i18n::tr("Browse Folder…"), None, false, 0.0).clicked()
     {
@@ -562,6 +563,27 @@ pub(crate) fn fs_cached<T: Clone + Send + 'static>(ui: &egui::Ui, kind: &'static
     lock(&cell)
 }
 
+/// Identity of a folder's appearance in one of Local's possibly overlapping trees.
+struct LocalTree<'a> {
+    root: &'a str,
+    places: &'a [(String, String)],
+}
+
+impl LocalTree<'_> {
+    fn id(&self, kind: &str, path: &str) -> egui::Id {
+        use lightcraft_catalog::query::folder_key;
+        egui::Id::new((kind, folder_key(self.root), folder_key(path)))
+    }
+
+    /// Keep the existing automation id in the innermost tree that owns this folder. Other
+    /// appearances need a tree suffix so UI drivers can address each row independently (#893).
+    fn widget_path(&self, path: &str) -> String {
+        use lightcraft_catalog::query::{folder_key, folder_within};
+        let owner = self.places.iter().filter(|(_, p)| folder_within(path, p)).max_by_key(|(_, p)| folder_key(p).len());
+        if owner.is_none_or(|(_, p)| same_folder(p, self.root)) { path.to_string() } else { format!("{path}:in:{}", self.root) }
+    }
+}
+
 /// A folder on disk with a disclosure triangle: click browses it, the triangle lists its
 /// subfolders. In the tree that holds the folder being browsed (`reveal`), the folders on the
 /// way down to it open whenever the browsed folder changes, so it shows highlighted in place.
@@ -570,6 +592,7 @@ pub(crate) fn fs_cached<T: Clone + Send + 'static>(ui: &egui::Ui, kind: &'static
 fn folder_tree(
     app: &mut LightcraftApp,
     ui: &mut egui::Ui,
+    tree: &LocalTree<'_>,
     name: &str,
     path: &str,
     indent: f32,
@@ -577,13 +600,13 @@ fn folder_tree(
     reveal: bool,
     transient: bool,
 ) {
-    let open_id = egui::Id::new(("folder-open", path.to_string()));
+    let open_id = tree.id("folder-open", path);
     let sel = current.is_some_and(|c| same_folder(c, path));
     let on_the_way = !sel && current.is_some_and(|c| lightcraft_catalog::query::folder_within(c, path));
     let mut open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(false);
     if reveal && on_the_way {
         // opened once per browsed folder: collapsing it again afterwards sticks
-        let revealed_id = egui::Id::new(("folder-revealed", path.to_string()));
+        let revealed_id = tree.id("folder-revealed", path);
         let target = current.map(str::to_string);
         if ui.data(|d| d.get_temp::<Option<String>>(revealed_id)) != Some(target.clone()) {
             open = true;
@@ -593,8 +616,9 @@ fn folder_tree(
             });
         }
     }
-    let resp = row(app, ui, &format!("local:{path}"), Icon::Folder, name, None, sel, indent + 12.0).on_hover_text(path);
-    let tr = disclosure_triangle(ui, &resp, indent, open, egui::Id::new(("folder-tri", path.to_string())), format!("folderToggle:{path}"));
+    let widget_path = tree.widget_path(path);
+    let resp = row(app, ui, &format!("local:{widget_path}"), Icon::Folder, name, None, sel, indent + 12.0).on_hover_text(path);
+    let tr = disclosure_triangle(ui, &resp, indent, open, tree.id("folder-tri", path), format!("folderToggle:{widget_path}"));
     if tr.clicked() {
         open = !open;
         ui.data_mut(|d| d.insert_temp(open_id, open));
@@ -650,7 +674,7 @@ fn folder_tree(
     });
     if open && indent < 12.0 * 8.0 {
         for (n, p) in subfolders(ui, path) {
-            folder_tree(app, ui, &n, &p, indent + 12.0, current, reveal, false);
+            folder_tree(app, ui, tree, &n, &p, indent + 12.0, current, reveal, false);
         }
     }
 }

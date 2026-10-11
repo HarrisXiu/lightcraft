@@ -1,5 +1,10 @@
 # What's new in LightCraft
 
+## 2026-10-11
+
+- Local folders shown both below Home and as a saved shortcut expand independently; their disclosure
+  triangles remain clickable in both trees (issue #893).
+
 ## 2026-10-10
 
 ### Activity stack

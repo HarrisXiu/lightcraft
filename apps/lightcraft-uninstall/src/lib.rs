@@ -1,5 +1,7 @@
 //! Opt-in MSI cleanup. Delete only LightCraft's files, never an entire library root.
 //! Preflight every target and hold the same OS locks as the app before removing anything.
+//! A folder is removed only when deleting our files emptied it, and a folder a preference or
+//! the environment points at is touched only when its contents show it is ours.
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
@@ -94,26 +96,58 @@ fn json_file(path: &Path) -> Result<Option<serde_json::Value>, String> {
 }
 
 impl Plan {
-    fn file(&mut self, path: &Path) -> Result<(), String> {
+    /// Queue `path` for deletion; a protected or missing file is skipped (`false`). Its folder is
+    /// not touched: a library's own folder is never removed.
+    fn queue(&mut self, path: &Path) -> Result<bool, String> {
         if self.protected.iter().any(|p| path.starts_with(p)) {
+            return Ok(false);
+        }
+        let Some(meta) = checked(path)? else { return Ok(false) };
+        if !meta.is_file() {
+            return Err(fail(path, "expected a regular file"));
+        }
+        if self.seen_files.insert(path.to_path_buf()) {
+            if self.seen_files.len() > MAX_ENTRIES {
+                return Err(fail(path, "too many cleanup files; clean up manually"));
+            }
+            self.files.push(path.to_path_buf());
+        }
+        Ok(true)
+    }
+
+    /// [`Plan::queue`] in `root`, a folder that is ours to remove. The folders from the file's
+    /// up to `root` become candidates for removal ([`Plan::apply`] removes one only if it is
+    /// empty by then), so a folder that was already empty, or holds nothing of ours, is never a
+    /// candidate.
+    fn file(&mut self, path: &Path, root: &Path) -> Result<(), String> {
+        if !self.queue(path)? {
             return Ok(());
         }
-        if let Some(meta) = checked(path)? {
-            if !meta.is_file() {
-                return Err(fail(path, "expected a regular file"));
+        let mut dir = path.parent();
+        while let Some(d) = dir.filter(|d| d.starts_with(root)) {
+            if self.seen_dirs.insert(d.to_path_buf()) {
+                self.dirs.push(d.to_path_buf());
             }
-            if self.seen_files.insert(path.to_path_buf()) {
-                if self.seen_files.len() > MAX_ENTRIES {
-                    return Err(fail(path, "too many cleanup files; clean up manually"));
-                }
-                self.files.push(path.to_path_buf());
+            if d == root {
+                break;
             }
+            dir = d.parent();
         }
         Ok(())
     }
 
     /// Enumerate bounded trees ahead of deletion. Never use remove_dir_all, including on failure.
-    fn tree(&mut self, path: &Path, depth: usize, keep: fn(&Path) -> bool) -> Result<(), String> {
+    fn tree(&mut self, path: &Path, keep: fn(&Path) -> bool) -> Result<(), String> {
+        self.tree_in(path, path, keep)
+    }
+
+    /// [`Plan::tree`] under `root`, the folder the caller owns: only folders from `root` down
+    /// can be removed, and only when a deletion emptied them (see [`Plan::file`]).
+    fn tree_in(&mut self, root: &Path, path: &Path, keep: fn(&Path) -> bool) -> Result<(), String> {
+        self.walk(root, path, 0, keep)
+    }
+
+    fn walk(&mut self, root: &Path, path: &Path, depth: usize, keep: fn(&Path) -> bool) -> Result<(), String> {
         if self.protected.iter().any(|p| path.starts_with(p)) {
             return Ok(());
         }
@@ -124,17 +158,50 @@ impl Plan {
         }
         if meta.is_file() {
             if !keep(path) {
-                self.file(path)?;
+                self.file(path, root)?;
             }
         } else if meta.is_dir() {
             for entry in fs::read_dir(path).map_err(|e| fail(path, e))? {
-                self.tree(&entry.map_err(|e| fail(path, e))?.path(), depth + 1, keep)?;
-            }
-            if self.seen_dirs.insert(path.to_path_buf()) {
-                self.dirs.push(path.to_path_buf());
+                self.walk(root, &entry.map_err(|e| fail(path, e))?.path(), depth + 1, keep)?;
             }
         } else {
             return Err(fail(path, "cleanup refuses special files"));
+        }
+        Ok(())
+    }
+
+    /// A smart previews folder from a preference, which may be a hand edit or point anywhere. It
+    /// is cleaned only when its contents are exactly our layout: `<32 hex>.lcsp` proxies and
+    /// `look-version`, at least one proxy, no folders and no other files. Anything else is left
+    /// alone, so a folder of photos or subfolders is never walked.
+    fn smart_folder(&mut self, path: &Path) -> Result<(), String> {
+        if self.protected.iter().any(|p| path.starts_with(p)) {
+            return Ok(());
+        }
+        let Some(meta) = checked(path)? else { return Ok(()) };
+        if !meta.is_dir() {
+            return Ok(());
+        }
+        let mut ours = Vec::new();
+        let mut proxies = 0usize;
+        for entry in fs::read_dir(path).map_err(|e| fail(path, e))? {
+            let entry = entry.map_err(|e| fail(path, e))?;
+            let entry_path = entry.path();
+            if !entry.file_type().map_err(|e| fail(&entry_path, e))?.is_file() {
+                return Ok(());
+            }
+            if hex_name(&entry_path, "lcsp") {
+                proxies += 1;
+            } else if entry_path.file_name().is_none_or(|n| n != "look-version") {
+                return Ok(());
+            }
+            ours.push(entry_path);
+        }
+        if proxies == 0 {
+            return Ok(());
+        }
+        for file in &ours {
+            self.file(file, path)?;
         }
         Ok(())
     }
@@ -160,11 +227,11 @@ impl Plan {
         self.locks.push(file);
         let prefs = json_file(&path.join("prefs.json"))?;
         let smart = prefs.as_ref().and_then(|p| p.get("smartPreviewsDir")).and_then(serde_json::Value::as_str).filter(|s| !s.is_empty());
-        self.tree(&path.join("Smart Previews"), 0, keep_non_preview)?;
+        self.tree(&path.join("Smart Previews"), keep_non_preview)?;
         if let Some(smart) = smart {
-            self.tree(&directory(Path::new(smart))?, 0, keep_non_preview)?;
+            self.smart_folder(&directory(Path::new(smart))?)?;
         }
-        self.tree(&path.join("thumbs"), 0, keep_non_thumbnail)?;
+        self.tree(&path.join("thumbs"), keep_non_thumbnail)?;
         for entry in fs::read_dir(path).map_err(|e| fail(path, e))? {
             let entry = entry.map_err(|e| fail(path, e))?;
             let name = entry.file_name();
@@ -178,11 +245,11 @@ impl Plan {
                     .iter()
                     .any(|n| name == format!("{n}.tmp") || name.starts_with(&format!("{n}.corrupt-")))
             {
-                self.file(&entry.path())?;
+                self.queue(&entry.path())?;
             }
         }
         if delete_originals {
-            self.tree(&path.join("Originals"), 0, |_| false)?;
+            self.tree(&path.join("Originals"), |_| false)?;
         }
         Ok(())
     }
@@ -196,7 +263,12 @@ impl Plan {
                 removed += 1;
             }
         }
-        for path in &self.dirs {
+        // Deepest first: a folder is tried once the candidates inside it are gone. Only folders
+        // that held a file deleted above are candidates (`file`), and `remove_dir` leaves any
+        // that still holds something, so a folder that was already empty is never removed.
+        let mut dirs = self.dirs;
+        dirs.sort_by_key(|d| std::cmp::Reverse(d.components().count()));
+        for path in &dirs {
             if checked(path)?.is_some() {
                 match fs::remove_dir(path) {
                     Ok(()) => {}
@@ -254,25 +326,28 @@ pub fn clean(options: &Options) -> Result<usize, String> {
     for library in &libraries {
         plan.library(library, options.delete_originals)?;
     }
-    for name in ["logs", "models", "denoise-models", "camera-profiles"] {
-        let dir = options.config.join(name);
-        for library in &libraries {
-            if library.starts_with(&dir) || dir.starts_with(library) {
-                return Err(fail(&dir, "configuration and library folders overlap; clean up manually"));
+    // The settings folder can be set by an environment variable or an MSI property, so its name
+    // proves nothing. Clean it only when it holds our settings file: without one, a `models` or
+    // `logs` folder there may be anyone's.
+    let ours = settings.as_ref().and_then(|s| s.get("settings")).is_some_and(serde_json::Value::is_object);
+    if ours {
+        for name in ["logs", "models", "denoise-models", "camera-profiles"] {
+            let dir = options.config.join(name);
+            for library in &libraries {
+                if library.starts_with(&dir) || dir.starts_with(library) {
+                    return Err(fail(&dir, "configuration and library folders overlap; clean up manually"));
+                }
             }
+            plan.tree_in(&options.config, &dir, |_| false)?;
         }
-        plan.tree(&dir, 0, |_| false)?;
-    }
-    if checked(&options.config)?.is_some() {
         for entry in fs::read_dir(&options.config).map_err(|e| fail(&options.config, e))? {
             let entry = entry.map_err(|e| fail(&options.config, e))?;
             let name = entry.file_name();
             let name = name.to_string_lossy();
             if matches!(name.as_ref(), "ui.json" | "ui.json.tmp" | "gpu-init.marker") || name.starts_with("ui.json.corrupt-") {
-                plan.file(&entry.path())?;
+                plan.file(&entry.path(), &options.config)?;
             }
         }
-        plan.dirs.push(options.config.clone());
     }
     plan.apply()
 }

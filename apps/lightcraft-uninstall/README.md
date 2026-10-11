@@ -24,6 +24,19 @@ folders, unrecognized files and referenced photos outside `Originals` are kept. 
 an entire library root; the empty `catalog.lock` stays to avoid racing another library opener.
 Without a catalog snapshot/log the next launch initializes a new library, including demo photos.
 
+Two rules keep it out of folders that are not LightCraft's:
+
+- **A folder is removed only when deleting our files emptied it.** Folders become candidates
+  through a file deleted inside them; one that was already empty, and so every folder above it,
+  stays.
+- **A folder that a setting points at is touched only when its contents show it is ours.** The
+  smart previews folder from `prefs.json` → `smartPreviewsDir` is cleaned only when it holds
+  nothing but `<32 hex>.lcsp` proxies and `look-version`, with at least one proxy and no
+  subfolders; otherwise it is left exactly as it is and never walked (so not even a leftover
+  temporary file beside the proxies is tolerated). A library must hold two of its marker files.
+  The settings folder (`LIGHTCRAFT_CONFIG_DIR` or the default) is cleaned only when it holds a
+  `ui.json` with our `settings` object; without it, `logs`, `models` and the rest stay.
+
 Deleting `Originals` requires the separate checkbox. Both choices warn about irreversible loss:
 cleaning the catalog loses edits and deleting `Originals` loses photo copies. Symlinks and Windows
 junctions are refused, including at ancestors. Paths must be absolute, recognized library markers
@@ -34,7 +47,11 @@ An I/O failure after deletion starts can leave a partial cleanup; MSI reports fa
 helper records the path in `%TEMP%\lightcraft-uninstall.log` for manual recovery/cleanup.
 When the helper fails, Windows Installer rolls the uninstall back: LightCraft stays installed, and
 the error (the package's own text for error 1722) says so, to close LightCraft and uninstall again
-or to uninstall without cleanup, and where the log is.
+or to uninstall without cleanup, and where the log is. Seen on Windows 11 with the library lock
+held: msiexec returned 1603, and the program files, registry entries and Apps entry were all still
+there. Not tested: a machine with rollback disabled (`DISABLEROLLBACK`, the `DisableRollback`
+policy), where Windows Installer is documented not to run commit actions at all, so a chosen
+cleanup would be skipped.
 
 `cargo test -p lightcraft-uninstall` uses synthetic temporary folders only. The compiled MSI's
 choice defaults, secure properties, maintenance routing, Apps entry, success/failure pages and

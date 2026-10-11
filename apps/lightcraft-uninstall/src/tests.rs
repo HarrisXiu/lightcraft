@@ -60,22 +60,25 @@ fn deleting_originals_requires_separate_consent_and_keeps_external_photos() {
     assert_eq!(fs::read(f.root.join("external/photo.raw")).unwrap(), b"external original");
 }
 
+/// The library last opened from Settings is cleaned too, and so is its smart previews folder
+/// elsewhere when that holds nothing but proxies and their marker (a folder holding anything
+/// else: `a_preview_folder_preference_pointing_at_a_user_folder_changes_nothing_there`).
 #[test]
-fn custom_library_and_external_smart_previews_are_cleaned_without_other_files() {
+fn custom_library_and_a_preview_folder_of_only_proxies_are_cleaned() {
     let f = Fixture::new();
     let custom = f.root.join("custom");
     f.put("custom/catalog.snap", b"catalog");
     f.put("custom/catalog.log", b"log");
     f.put("custom/Originals/preserved.raw", b"raw");
     f.put("proxies/abcdef0123456789abcdef0123456789.lcsp", b"proxy");
-    f.put("proxies/photo.jpg", b"real photo");
+    f.put("proxies/look-version", b"1");
     f.put("config/ui.json", serde_json::json!({"settings":{"libraryPath":custom}}).to_string().as_bytes());
     f.put("custom/prefs.json", serde_json::json!({"smartPreviewsDir":f.root.join("proxies")}).to_string().as_bytes());
     clean(&f.options).unwrap();
     assert!(!custom.join("catalog.snap").exists());
+    assert!(custom.is_dir(), "a library folder itself is never removed");
     assert!(custom.join("Originals/preserved.raw").exists());
-    assert!(f.root.join("proxies/photo.jpg").exists());
-    assert!(!f.root.join("proxies/abcdef0123456789abcdef0123456789.lcsp").exists());
+    assert!(!f.root.join("proxies").exists());
 }
 
 #[test]
@@ -133,6 +136,103 @@ fn an_offline_saved_library_leaves_settings_and_default_library_untouched() {
     assert!(clean(&f.options).unwrap_err().contains("unavailable"));
     assert!(f.options.config.join("ui.json").exists());
     assert!(f.options.library.join("catalog.snap").exists());
+}
+
+/// Every folder and file below `dir`, with each file's contents: what a user would miss.
+fn listing(dir: &Path) -> Vec<(PathBuf, Option<Vec<u8>>)> {
+    let mut out = Vec::new();
+    let mut todo = vec![dir.to_path_buf()];
+    while let Some(d) = todo.pop() {
+        for entry in fs::read_dir(&d).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                todo.push(path.clone());
+                out.push((path, None));
+            } else {
+                let bytes = fs::read(&path).unwrap();
+                out.push((path, Some(bytes)));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+const PROXY: &str = "abcdef0123456789abcdef0123456789.lcsp";
+
+/// The smart previews folder is a preference: a user setting, a hand edit or a damaged file can
+/// point it at a home or Pictures folder. Nothing there may change: not the empty folders, not
+/// a file that happens to be called `look-version` or to look like a proxy (review of PR #931).
+#[test]
+fn a_preview_folder_preference_pointing_at_a_user_folder_changes_nothing_there() {
+    type Fill = fn(&Fixture);
+    let cases: [(&str, Fill); 3] = [
+        ("a home folder", |f| {
+            f.put("elsewhere/Pictures/2024/trip.jpg", b"photo");
+            f.put("elsewhere/Pictures/look-version", b"a file of the user's");
+            f.put(&format!("elsewhere/Documents/{PROXY}"), b"a file of the user's");
+            f.put("elsewhere/look-version", b"a file of the user's");
+            f.put(&format!("elsewhere/{PROXY}"), b"a file of the user's");
+            for empty in ["elsewhere/New folder", "elsewhere/Pictures/Empty album", "elsewhere/Projects/a/b"] {
+                fs::create_dir_all(f.root.join(empty)).unwrap();
+            }
+        }),
+        ("proxies beside a photo", |f| {
+            f.put(&format!("elsewhere/{PROXY}"), b"proxy");
+            f.put("elsewhere/photo.jpg", b"photo");
+        }),
+        ("no proxy at all", |f| {
+            f.put("elsewhere/look-version", b"a file of the user's");
+        }),
+    ];
+    for (what, fill) in cases {
+        let f = Fixture::new();
+        let elsewhere = f.root.join("elsewhere");
+        fill(&f);
+        f.put("library/prefs.json", serde_json::json!({"smartPreviewsDir":elsewhere}).to_string().as_bytes());
+        let before = listing(&elsewhere);
+        clean(&f.options).unwrap();
+        assert_eq!(listing(&elsewhere), before, "{what}");
+        assert!(!f.options.library.join("catalog.snap").exists(), "{what}: the library is still cleaned");
+    }
+}
+
+/// A folder is removed only when deleting our files emptied it: one that was already empty, and
+/// so every folder above it, stays.
+#[test]
+fn folders_that_were_already_empty_are_kept() {
+    let mut f = Fixture::new();
+    f.options.delete_originals = true;
+    let kept = ["library/thumbs/cd", "library/Smart Previews/Mine", "library/Originals/Empty album", "config/models/custom", "config/Notes"];
+    for dir in kept {
+        fs::create_dir_all(f.root.join(dir)).unwrap();
+    }
+    clean(&f.options).unwrap();
+    for dir in kept {
+        assert!(f.root.join(dir).is_dir(), "{dir}");
+    }
+    // what our deletions emptied is gone, files and folders
+    for gone in ["config/ui.json", "config/logs", "config/models/face", "library/Originals/nested", "library/Originals/only-copy.raw"] {
+        assert!(!f.root.join(gone).exists(), "{gone}");
+    }
+    assert!(!f.root.join("library/Smart Previews").join(PROXY).exists());
+}
+
+/// The settings folder comes from an environment variable or an MSI property. Without our
+/// settings file in it, a `models` or `logs` folder there is not known to be ours.
+#[test]
+fn a_settings_folder_without_our_settings_file_is_left_alone() {
+    for settings in [None, Some("{}"), Some("[]")] {
+        let f = Fixture::new();
+        match settings {
+            Some(text) => f.put("config/ui.json", text.as_bytes()),
+            None => fs::remove_file(f.options.config.join("ui.json")).unwrap(),
+        }
+        let before = listing(&f.options.config);
+        clean(&f.options).unwrap();
+        assert_eq!(listing(&f.options.config), before, "{settings:?}");
+        assert!(!f.options.library.join("catalog.snap").exists(), "{settings:?}: the library is still cleaned");
+    }
 }
 
 #[cfg(windows)]

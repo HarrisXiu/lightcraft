@@ -127,6 +127,10 @@
   Selected Settings). Ctrl+V only reaches LightCraft while the system clipboard holds text; otherwise use Edit ▸ Paste Edit
   Settings.
 
+### Dialogs
+- System Info, All Metadata and What's New end with one Close button, like About, instead of Cancel and OK
+  (issue #782).
+
 ### Synchronize Folder
 - Right-click a folder (or a disk other than the startup disk) in the sidebar's Folders section ▸ Synchronize
   Folder…. The folder and the folders inside it are scanned in the background for photos added on disk, photos whose
@@ -191,6 +195,8 @@
 - Shortcuts are editable: Help ▸ Keyboard Shortcuts (⌘/) lists every command with a search box; click a shortcut and
   press the new keys (Esc cancels), × removes it, ↺ restores the original, Reset All undoes every change. A key that
   belonged to another command moves to the new one. Menus show the new keys; agents use `app.setShortcut`.
+- Return presses OK in Choose Edit Settings to Copy (⇧⌘C) and Paste Selected Settings (⇧⌘V), and Esc cancels them
+  (issue #735).
 
 ### Formats
 - HEIC / HEIF photos (iPhone and Mac) open now: the optional `lightcraft-heif` crate (heic-rs, pure Rust) behind

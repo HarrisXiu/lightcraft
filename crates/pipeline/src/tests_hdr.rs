@@ -62,6 +62,38 @@ fn hdr_midtones_match_the_sdr_render() {
 }
 
 #[test]
+fn hdr_keeps_the_camera_tone_curve_in_the_midtones() {
+    // A raw with a fitted camera look (brighter midtones than the generic curve): its HDR render
+    // used to drop the look and come out more than a stop darker than the SDR render.
+    let knots = std::array::from_fn(|i| {
+        let x = 0.004 * 1.18f32.powi(i as i32);
+        [x, 1.0 - (-2.0 * x).exp()]
+    });
+    let info = SourceInfo { camera_tone: crate::tone::CameraTone::new(knots), ..raw() };
+    let src = sunset();
+    let render_at = |s: &DevelopSettings, depth| {
+        let req = RenderRequest { depth, ..RenderRequest::fit(240, 240) };
+        match render(&src, &info, s, &req).deep.map(|d| d.samples) {
+            Some(DeepSamples::F32(v)) => v,
+            other => panic!("expected float samples, got {other:?}"),
+        }
+    };
+    let hdr = render_at(&hdr_on(3.0), OutputDepth::F32Hdr);
+    let sdr = render_at(&DevelopSettings::default(), OutputDepth::F32Linear);
+    let mut n = 0;
+    for (h, s) in hdr.as_chunks::<3>().0.iter().zip(sdr.as_chunks::<3>().0) {
+        if s.iter().all(|v| *v < 0.4) {
+            for (a, b) in h.iter().zip(s) {
+                assert!((a - b).abs() < 2e-3, "{h:?} vs {s:?}");
+            }
+            n += 1;
+        }
+    }
+    assert!(n > 100, "the scene should have midtones and shadows ({n})");
+    assert!(hdr.iter().any(|v| *v > 1.0), "highlights go past SDR white");
+}
+
+#[test]
 fn f32hdr_without_hdr_is_the_sdr_float_render() {
     let src = sunset();
     let s = DevelopSettings::default();

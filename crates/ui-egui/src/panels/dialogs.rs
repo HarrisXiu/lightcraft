@@ -60,6 +60,21 @@ pub const ABOUT_TABS: &[(&str, &str)] = &[("about", "About"), ("contributors", "
 /// Help ▸ What's New (docs/whats-new.md).
 pub const WHATS_NEW: &str = include_str!("../../../../docs/whats-new.md");
 
+fn window_id(dialog: &Dialog) -> egui::Id {
+    egui::Id::new(if matches!(dialog, Dialog::Import { .. }) { "lightcraft-import-dialog" } else { "lightcraft-dialog" })
+}
+
+/// Block the underlying panels from the first frame, before the window establishes its modal
+/// layer. Close background menus on entry; popups subsequently opened inside the dialog stay usable.
+pub(crate) fn prepare(app: &LightcraftApp, ui: &mut egui::Ui) {
+    let Some(dialog) = &app.ui.dialog else { return };
+    ui.disable();
+    let layer = egui::LayerId::new(egui::Order::Middle, window_id(dialog));
+    if ui.ctx().memory(|m| m.top_modal_layer()) != Some(layer) {
+        egui::Popup::close_all(ui.ctx());
+    }
+}
+
 pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     let Some(mut dlg) = app.ui.dialog.clone() else { return };
     let at_start = dlg.clone();
@@ -77,6 +92,16 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     });
     let mut close = false;
     let mut confirm = false;
+    // Return presses OK in a dialog without a text field of its own (Lightroom's default button);
+    // a widget that has the keyboard focus (a text field, a button or checkbox reached with Tab)
+    // takes Return itself. Consumed before the dialog is drawn, so nothing else sees it too.
+    if return_confirms(&dlg)
+        && ctx.memory(|m| m.focused().is_none())
+        && !egui::Popup::is_any_open(ctx)
+        && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+    {
+        confirm = true;
+    }
     let title: String = match &dlg {
         Dialog::TextPrompt { title, .. } => title.as_str(),
         Dialog::NewAlbum { folder: true, .. } => "Create Folder",
@@ -127,7 +152,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     // own so the size it is given doesn't carry over to the other dialogs. Its content scrolls
     // rather than growing the window when the options below the grid get taller (e.g. Copy).
     let import = matches!(dlg, Dialog::Import { .. });
-    let window_id = egui::Id::new(if import { "lightcraft-import-dialog" } else { "lightcraft-dialog" });
+    let window_id = window_id(&dlg);
     let shown = egui::Window::new(crate::i18n::tr(&title)).id(window_id)
         .collapsible(false)
         .resizable(import)
@@ -948,9 +973,14 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
             }
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                // a model file LightCraft cannot use has nothing to confirm
+                // a model file LightCraft cannot use has nothing to confirm, nor has a dialog that
+                // only shows something (one Close, no Cancel / OK)
                 let unusable_model = matches!(&dlg, Dialog::DenoiseModel { info, .. } | Dialog::FaceModel { info, .. } if info["kind"] == "unsupported");
-                let informational = unusable_model || matches!(dlg, Dialog::About | Dialog::Shortcuts | Dialog::Settings { .. });
+                let informational = unusable_model
+                    || matches!(
+                        dlg,
+                        Dialog::About | Dialog::Shortcuts | Dialog::Settings { .. } | Dialog::SystemInfo { .. } | Dialog::AllMetadata { .. } | Dialog::WhatsNew
+                    );
                 let sam = &app.session.segmenter;
                 let (sam_installed, sam_running, sam_failed) = (sam.installed(), sam.download_status().running, sam.download_status().error.is_some());
                 // no download location in this build: nothing to offer but the manual install
@@ -1022,6 +1052,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
             }
         });
     if let Some(w) = shown {
+        ctx.memory_mut(|m| m.set_modal_layer(w.response.layer_id));
         ctx.move_to_top(w.response.layer_id);
         crate::widgets::register(ctx, "dialog:window", w.response.rect);
     }
@@ -1554,6 +1585,12 @@ fn choices<V: PartialEq + Copy>(ui: &mut egui::Ui, label: &str, id: &str, option
             }
         }
     });
+}
+
+/// Dialogs that Return confirms with nothing focused (those with text fields confirm from the
+/// field: `dialog_field`).
+fn return_confirms(dlg: &Dialog) -> bool {
+    matches!(dlg, Dialog::CopySettings { .. } | Dialog::PasteSettings { .. })
 }
 
 /// A dialog's one text field: it keeps the focus (except while its own menu has it) and opens

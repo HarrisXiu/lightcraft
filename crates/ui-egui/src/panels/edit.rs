@@ -216,7 +216,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                     if crate::widgets::icon_button(ui, "wbPicker", Icon::Picker, vec2(28.0, 28.0), active, true, "White Balance Selector (W)")
                         .clicked()
                     {
-                        app.ui.tool = if active { String::new() } else { "wbPicker".into() };
+                        if active {
+                            app.ui.tool.clear();
+                        } else if let Err(e) = app.run("tool.wbPicker", json!({})) {
+                            // the same as W: from Compare, Survey or the grid it opens the photo in Detail
+                            app.toast(ui.ctx(), e);
+                        }
                     }
                 });
             });
@@ -561,21 +566,21 @@ fn histogram(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     // EXIF strip
     if let Some(ph) = app.session.catalog.photo(id) {
         let m = &ph.meta;
-        let items = [
-            m.iso.map(|i| format!("ISO {i}")).unwrap_or_default(),
-            m.focal_mm.map(|f| format!("{f:.0}mm")).unwrap_or_default(),
-            m.aperture.map(|a| format!("f/{a:.1}")).unwrap_or_default(),
-            m.shutter.clone(),
-        ];
-        let y = r.bottom() - 13.0;
-        for (i, s) in items.iter().enumerate() {
-            let x = r.left() + 18.0 + (r.width() - 36.0) * i as f32 / 3.0;
-            let align = match i {
-                0 => Align2::LEFT_CENTER,
-                3 => Align2::RIGHT_CENTER,
-                _ => Align2::CENTER_CENTER,
-            };
-            p.text(pos2(x, y), align, s, t.font(12.5), t.text_label);
+        let parts: Vec<String> = [
+            m.iso.map(|i| format!("ISO {i}")),
+            m.focal_mm.map(|f| format!("{f:.0}mm")),
+            m.aperture.map(|a| format!("f/{a:.1}")),
+            if m.shutter.is_empty() { None } else { Some(m.shutter.clone()) },
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+
+        if !parts.is_empty() {
+            let text = parts.join(" · ");
+            let y = r.bottom() - 13.0;
+            let x = r.left() + r.width() / 2.0;
+            p.text(pos2(x, y), Align2::CENTER_CENTER, text, t.font(12.5), t.text_label);
         }
     }
 }

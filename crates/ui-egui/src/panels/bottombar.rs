@@ -76,8 +76,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         });
 }
 
-/// Width of the centre group: the rating/flag pill, then Copy/Paste Edit Settings and its gear.
-const PILL_W: f32 = 196.0;
+/// Five 19-point stars, three 22-point flags, seven 3-point gaps, a 6-point group gap
+/// and 10-point padding at both ends.
+const PILL_W: f32 = 208.0;
 
 /// The rating/flag pill and copy/paste settings, between `from` and `to` (the side groups): the
 /// copy buttons go first when there is no room (they are in the Edit menu too), then the pill.
@@ -453,6 +454,50 @@ mod visual_regressions {
             harness.key_press(egui::Key::Space);
             harness.run_steps(3);
             assert_eq!(harness.state().ui.view, ViewMode::People, "keyboard activation dispatches the view command");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Services;
+    use crate::headless::HeadlessView;
+
+    #[test]
+    fn rating_and_flag_buttons_keep_padding_inside_the_pill() {
+        for scale in [1.0, 2.0] {
+            for room in [240.0, 500.0] {
+                let mut app = LightcraftApp::new(lightcraft_engine::Session::new(), Services::default());
+                let mut view = HeadlessView::new();
+                for frame in 0..3 {
+                    let raw = HeadlessView::raw_input(vec2(700.0, 40.0), scale, frame as f64 / 60.0, vec![]);
+                    view.run(raw, |ui| {
+                        let full = ui.max_rect();
+                        centre(&mut app, ui, full, 20.0, 20.0 + room);
+                    });
+                    let widgets = crate::widgets::take_registry(&view.ctx);
+                    let star = widgets.iter().find(|(id, _)| id == "star:bottom:1").unwrap().1;
+                    let pill = view
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            egui::Shape::Rect(rect) if rect.rect.contains(star.center()) && rect.rect.height() == 30.0 => Some(rect.rect),
+                            _ => None,
+                        })
+                        .unwrap();
+                    let inner = pill.shrink2(vec2(10.0, 4.0));
+                    for (id, rect) in &widgets {
+                        if id.starts_with("star:bottom:") || id.starts_with("flag:") {
+                            assert!(inner.contains_rect(*rect), "{id} {rect:?} exceeds the pill's padded bounds {inner:?} at scale {scale}");
+                        }
+                    }
+                    assert!(pill.left() >= 20.0 && pill.right() <= 20.0 + room);
+                    if let Some((_, copy)) = widgets.iter().find(|(id, _)| id == "button:copySettings") {
+                        assert!(copy.left() >= pill.right() + 10.0);
+                    }
+                }
+            }
         }
     }
 }

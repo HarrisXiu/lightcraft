@@ -308,6 +308,32 @@ fn mask_overlay_keys_and_pins() {
     h.settle(SETTLE);
 }
 
+/// #518: holding the brush still, however long, paints the same feathered spot as a quick press.
+#[test]
+fn holding_the_brush_still_does_not_harden_the_spot() {
+    let mut h = detail("panel.masking");
+    let r = h.request("ui.set", json!({"brushSize": 0.1, "brushFeather": 80.0, "brushFlow": 100.0}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    exec(&mut h, "tool.brush", json!({"new": true}));
+    // a quick press at the left, a long stationary hold (120 frames, ~2 s) at the right
+    brush_at(&mut h, 0.3, 0.5);
+    let mut hold = vec![json!({"kind": "down", "x": 0.7, "y": 0.5})];
+    hold.extend((0..120).map(|_| json!({"kind": "move", "x": 0.7, "y": 0.5})));
+    hold.push(json!({"kind": "up", "x": 0.7, "y": 0.5}));
+    pointer(&mut h, json!(hold));
+    let d = develop(&h);
+    let MaskShape::Brush { strokes } = &d.masks[0].components[0].shape else { panic!("brush") };
+    assert_eq!(strokes.len(), 2, "{strokes:?}");
+    assert_eq!(strokes[1].points.len(), 1, "a stationary hold records one sample: {:?}", strokes[1].points);
+    // the same edge profile around both spots
+    for dx in [0usize, 4, 6, 8] {
+        let (quick, held) = (mask_coverage(&h, 0, 30 + dx, 50), mask_coverage(&h, 0, 70 + dx, 50));
+        assert!((quick - held).abs() < 0.01, "{dx} px from the centre: quick {quick}, held {held}");
+    }
+    assert!(mask_coverage(&h, 0, 70 + 6, 50) < 0.9, "the edge stays feathered");
+    h.settle(SETTLE);
+}
+
 #[test]
 fn brush_strokes_carry_auto_mask() {
     let mut h = detail("panel.masking");
@@ -1125,4 +1151,64 @@ fn ai_masks_without_the_model_offer_the_download() {
     assert!(e.starts_with(lightcraft_engine::segment::NOT_INSTALLED), "{e}");
     assert!(develop(&h).masks.is_empty());
     assert!(t.elapsed() < SETTLE, "{:?}", t.elapsed());
+}
+
+fn color_samples(h: &Headless) -> serde_json::Value {
+    let d = develop(h);
+    let m = d.masks.last().expect("a mask");
+    let Some(MaskShape::ColorRange { samples, .. }) = m.components.iter().map(|c| &c.shape).find(|s| matches!(s, MaskShape::ColorRange { .. }))
+    else {
+        panic!("colour range")
+    };
+    serde_json::to_value(samples).expect("samples")
+}
+
+/// Same samples, up to sub-pixel rounding and the preview level sampled.
+#[track_caller]
+fn assert_close(a: &serde_json::Value, b: &serde_json::Value) {
+    let flat = |v: &serde_json::Value| -> Vec<f64> {
+        v.as_array().unwrap().iter().flat_map(|s| s.as_array().unwrap().iter().map(|x| x.as_f64().unwrap())).collect()
+    };
+    let (a, b) = (flat(a), flat(b));
+    assert_eq!(a.len(), b.len());
+    assert!(a.iter().zip(&b).all(|(x, y)| (x - y).abs() < 0.05), "{a:?} vs {b:?}");
+}
+
+/// Regression: the Colour Range "Pick" button armed the eyedropper, but with the Masking panel
+/// open the loupe's clicks went to the mask overlay, so no sample was ever taken.
+#[test]
+fn color_range_pick_button_samples_the_photo() {
+    let mut h = detail("panel.masking");
+    exec(&mut h, "mask.add", json!({"kind": "colorRange"}));
+    h.app.ui.tool.clear();
+    h.settle(SETTLE);
+    click(&mut h, "button:colorPick0");
+    assert_eq!(h.app.ui.tool, "colorRange", "Pick arms the eyedropper");
+    brush_at(&mut h, 0.25, 0.5);
+    let ui_sample = color_samples(&h);
+    assert_eq!(ui_sample.as_array().map(Vec::len), Some(1), "a click samples a colour");
+    // the sample is the colour at that normalized point
+    exec(&mut h, "mask.sampleColor", json!({"x": 0.25, "y": 0.5}));
+    assert_close(&color_samples(&h), &ui_sample);
+    // ⇧-click adds
+    let r = h.request("ui.pointer", json!({"shift": true, "events": [{"kind": "down", "x": 0.7, "y": 0.2}, {"kind": "up", "x": 0.7, "y": 0.2}]}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    assert_eq!(color_samples(&h).as_array().map(Vec::len), Some(2), "⇧-click adds a sample");
+
+    // cropped and zoomed: the click samples the photo point under it
+    exec(&mut h, "crop.set", json!({"rect": [0.2, 0.1, 0.9, 0.8]}));
+    h.app.ui.zoom = crate::state::Zoom::Percent(200.0);
+    h.app.ui.pan = (0.5, 0.5);
+    h.settle(SETTLE);
+    brush_at(&mut h, 0.5, 0.5);
+    let ui_sample = color_samples(&h);
+    assert_eq!(ui_sample.as_array().map(Vec::len), Some(1));
+    // (the centre of the crop box, in normalized source coordinates)
+    let c = develop(&h).crop.geometry.rect;
+    exec(&mut h, "mask.sampleColor", json!({"x": (c.x0 + c.x1) / 2.0, "y": (c.y0 + c.y1) / 2.0}));
+    assert_close(&color_samples(&h), &ui_sample); // a cropped, zoomed pick maps to the same frame point
+    // Pick again ends picking
+    click(&mut h, "button:colorPick0");
+    assert!(h.app.ui.tool.is_empty());
+    h.settle(SETTLE);
 }

@@ -3458,6 +3458,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "lightcraft-uninstall"
+version = "0.6.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "lightcraft-web"
 version = "0.6.0"
 dependencies = [

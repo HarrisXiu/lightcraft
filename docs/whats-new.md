@@ -1,5 +1,12 @@
 # What's new in LightCraft
 
+## 2026-10-11
+
+- Windows: uninstalling, from Settings → Apps or by running the MSI again and choosing Remove, ends
+  on a page confirming LightCraft was uninstalled (issue #892) and first offers optional cleanup
+  of settings, edits, library indexes and generated data. Deleting library-owned original photo
+  copies is a separate unchecked choice; externally referenced photos are kept (issue #895).
+
 ## 2026-10-10
 
 ### Activity stack

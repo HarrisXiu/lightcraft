@@ -4,7 +4,8 @@
   `wix extension add -g WixToolset.UI.wixext/5.0.2 WixToolset.Util.wixext/5.0.2`). Built by package.ps1:
 
     wix build lightcraft.wxs -arch x64 -ext WixToolset.UI.wixext/5.0.2 -ext WixToolset.Util.wixext/5.0.2
-      -d Version=1.2.3 -d BinDir=... -d IconPath=... -d UiDialogBmp=... -d UiBannerBmp=... -o out.msi
+      -loc lightcraft.en-us.wxl -d Version=1.2.3 -d BinDir=... -d IconPath=...
+      -d UiDialogBmp=... -d UiBannerBmp=... -o out.msi
 
   Per-machine install into Program Files (or the folder chosen in the installer, or
   `INSTALLFOLDER=...` on the msiexec command line; upgrades keep it), a Start Menu shortcut, `.pcraft` owned by LightCraft,
@@ -32,6 +33,14 @@
     <Property Id="ARPURLINFOABOUT" Value="https://getartcraft.com/apps/lightcraft" />
     <Property Id="ARPURLUPDATEINFO" Value="https://getartcraft.com/apps/lightcraft" />
     <Property Id="ARPHELPLINK" Value="https://discord.gg/artcraft" />
+    <!-- Windows uninstalls an MSI product's own Apps entry with basic UI: a progress bar and no
+         dialogs, so neither the cleanup choices (issue #895) nor the completion page (issue #892)
+         would ever show there. Hide that entry and list our own (LightcraftArpEntry), whose
+         Uninstall opens this package's Remove pages: the same flow as running the MSI again. -->
+    <Property Id="ARPSYSTEMCOMPONENT" Value="1" />
+    <!-- Given by that entry's UninstallString. Secure: for an installed per-machine product,
+         Windows Installer drops any other public property a non-elevated user passes. -->
+    <Property Id="LIGHTCRAFTUNINSTALL" Secure="yes" />
 
     <StandardDirectory Id="ProgramFiles6432Folder">
       <Directory Id="INSTALLFOLDER" Name="LightCraft" />
@@ -51,6 +60,31 @@
     </Feature>
 
     <UIRef Id="LightcraftUI" />
+
+    <!-- Both choices are opt-in, and public/secure so they survive MSI elevation. Clean only
+         the invoking account; never enumerate profiles on this per-machine installation. -->
+    <Property Id="CLEANUSERDATA" Secure="yes" />
+    <Property Id="DELETEORIGINALS" Secure="yes" />
+    <Property Id="CLEANCONFIGDIR" Secure="yes" />
+    <Property Id="CLEANLIBRARYDIR" Secure="yes" />
+    <SetProperty Id="CLEANCONFIGDIR" Action="CleanConfigFromEnvironment" Value="[%LIGHTCRAFT_CONFIG_DIR]"
+        Before="CostFinalize" Sequence="both" Condition="NOT CLEANCONFIGDIR AND %LIGHTCRAFT_CONFIG_DIR" />
+    <SetProperty Id="CLEANCONFIGDIR" Value="[AppDataFolder]LightCraft" After="CleanConfigFromEnvironment"
+        Sequence="both" Condition="NOT CLEANCONFIGDIR" />
+    <SetProperty Id="CLEANLIBRARYDIR" Action="CleanLibraryFromEnvironment" Value="[%LIGHTCRAFT_LIBRARY]"
+        Before="CostFinalize" Sequence="both" Condition="NOT CLEANLIBRARYDIR AND %LIGHTCRAFT_LIBRARY" />
+    <SetProperty Id="CLEANLIBRARYDIR" Value="[%USERPROFILE]\Pictures\LightCraft Library"
+        After="CleanLibraryFromEnvironment" Sequence="both" Condition="NOT CLEANLIBRARYDIR" />
+    <!-- The embedded EXE remains available after RemoveFiles. It runs as the invoking user,
+         only when the uninstall script succeeded. No cleanup on upgrade, repair or cancel. -->
+    <Binary Id="LightcraftCleanup" SourceFile="$(var.BinDir)\lightcraft-uninstall.exe" />
+    <CustomAction Id="CleanLightcraftData" BinaryRef="LightcraftCleanup" Execute="commit"
+        Impersonate="yes" Return="check"
+        ExeCommand="--config &quot;[CLEANCONFIGDIR]\.&quot; --library &quot;[CLEANLIBRARYDIR]\.&quot; --delete-originals &quot;[DELETEORIGINALS]&quot;" />
+    <InstallExecuteSequence>
+      <Custom Action="CleanLightcraftData" Before="InstallFinalize"
+          Condition="Installed AND REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE AND CLEANUSERDATA=&quot;1&quot;" />
+    </InstallExecuteSequence>
   </Package>
 
   <!--
@@ -59,8 +93,9 @@
     Folder (issue #399) shows Program Files\LightCraft, or the installed version's folder on an
     upgrade; Change... browses, and a folder that can't be used (InvalidDirDlg) is refused before
     anything is installed. Failure and cancellation end on WiX's standard FatalError / UserExit
-    dialogs instead of the completion page. Maintenance (running the MSI again, Repair/Remove from
-    Apps) uses the standard maintenance dialogs.
+    dialogs instead of the completion page. Maintenance (running the MSI again) uses the standard
+    maintenance dialogs plus our opt-in cleanup page for Remove; Uninstall in Apps opens on that
+    page. Both end on the completion page, which then says LightCraft was uninstalled.
 
     This is WixUI_InstallDir without its licence-acceptance page: LightCraft is MIT OR Apache-2.0,
     which ask nothing of people who just install and run it, so a click-through EULA would only
@@ -78,6 +113,25 @@
         Value="LightCraft has been installed. You can start it at any time from the Start menu." />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch LightCraft" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <!-- ExitDialog is scheduled only on success by WixUI_Common. Its localized controls use
+         these properties so Remove gets an explicit result too (issue #892). They are set in the
+         UI sequence once the wizard pages have closed (the maintenance page records the choice in
+         WixUI_InstallMode; `msiexec /x ... /qf` gives REMOVE instead) and before ExecuteAction:
+         properties changed on the server are not copied back to the client UI. A wizard that
+         ends on Repair leaves the defaults. -->
+    <Property Id="LIGHTCRAFT_COMPLETIONTITLE" Value="Completed the LightCraft Setup Wizard" />
+    <Property Id="LIGHTCRAFT_COMPLETIONTEXT" Value="Click Finish to close the Setup Wizard." />
+    <SetProperty Id="LIGHTCRAFT_COMPLETIONTITLE" Value="LightCraft has been uninstalled"
+        After="CleanUninstallDlg" Sequence="ui"
+        Condition="Installed AND NOT UPGRADINGPRODUCTCODE AND (WixUI_InstallMode=&quot;Remove&quot; OR REMOVE~=&quot;ALL&quot;)" />
+    <SetProperty Id="LIGHTCRAFT_COMPLETIONTEXT"
+        Value="LightCraft was successfully removed from this computer. Click Finish to close."
+        After="SetLIGHTCRAFT_COMPLETIONTITLE" Sequence="ui"
+        Condition="Installed AND NOT UPGRADINGPRODUCTCODE AND (WixUI_InstallMode=&quot;Remove&quot; OR REMOVE~=&quot;ALL&quot;)" />
+    <!-- Uninstall from Apps (LIGHTCRAFTUNINSTALL=1, see LightcraftArpEntry) starts on the Remove
+         pages; VerifyReadyDlg shows its Remove button from this mode. -->
+    <SetProperty Id="WixUI_InstallMode" Value="Remove" Before="MaintenanceWelcomeDlg" Sequence="ui"
+        Condition="Installed AND LIGHTCRAFTUNINSTALL AND NOT PATCH" />
 
     <!-- "Launch LightCraft" on Finish. WixUnelevatedShellExec (Util extension) asks the desktop
          shell (Explorer) to start the program, so it runs as the signed-in user at normal
@@ -111,6 +165,51 @@
       <DialogRef Id="VerifyReadyDlg" />
       <DialogRef Id="MaintenanceWelcomeDlg" />
       <DialogRef Id="MaintenanceTypeDlg" />
+      <DialogRef Id="CancelDlg" />
+
+      <!-- Original, text-only options page for the Remove flow (issue #895). -->
+      <Dialog Id="CleanUninstallDlg" Width="370" Height="270" Title="LightCraft - Uninstall options">
+        <Control Id="Title" Type="Text" X="20" Y="12" Width="330" Height="20"
+            Text="{\WixUI_Font_Title}Choose what to keep" />
+        <Control Id="Description" Type="Text" X="20" Y="40" Width="330" Height="32"
+            Text="By default, uninstalling keeps your photos, edits and settings. These choices affect only this Windows account." />
+        <Control Id="CleanData" Type="CheckBox" X="20" Y="82" Width="330" Height="20"
+            Property="CLEANUSERDATA" CheckBoxValue="1" Text="Clean settings, edits, library indexes and caches" />
+        <Control Id="Scope" Type="Text" X="35" Y="106" Width="315" Height="36"
+            Text="Cleans the default (or configured) and last-used libraries. Presets and downloaded models are removed too. Other libraries and files are kept." />
+        <Control Id="Originals" Type="CheckBox" X="35" Y="151" Width="315" Height="20"
+            Property="DELETEORIGINALS" CheckBoxValue="1" Text="Also permanently delete photos copied into these libraries"
+            Disabled="yes" EnableCondition="CLEANUSERDATA=&quot;1&quot;" DisableCondition="CLEANUSERDATA&lt;&gt;&quot;1&quot;" />
+        <Control Id="Warning" Type="Text" X="35" Y="177" Width="315" Height="43"
+            Text="Photo deletion cannot be undone. Only copies inside these libraries' Originals folders are deleted; photos referenced elsewhere are kept. Close LightCraft before continuing." />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="Back">
+          <Publish Event="NewDialog" Value="MaintenanceTypeDlg" />
+        </Control>
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="Next">
+          <Publish Property="DELETEORIGINALS" Value="{}" Order="1" Condition="CLEANUSERDATA&lt;&gt;&quot;1&quot;" />
+          <Publish Event="NewDialog" Value="VerifyReadyDlg" Order="2" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="Cancel">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+
+      <!-- Error 1722 is "a program run as part of the setup did not finish as expected"; the only
+           such program here is the cleanup helper (CleanLightcraftData). When it refuses, e.g.
+           LightCraft still has the library open, Windows Installer rolls the uninstall back, so
+           say that and what to do instead of "contact your package vendor". -->
+      <Error Id="1722"
+          Message="LightCraft could not clean up your data, so it was not uninstalled. Close LightCraft and anything else using your library, then uninstall again, or uninstall without the cleanup option. The reason is recorded in lightcraft-uninstall.log in your temporary folder (%TEMP%)." />
+
+      <!-- Uninstall from Apps opens on the options page instead of the Welcome / Repair-or-Remove
+           pages (Back still reaches them). -->
+      <InstallUISequence>
+        <Show Dialog="override MaintenanceWelcomeDlg" Before="ProgressDlg"
+            Condition="Installed AND NOT RESUME AND NOT Preselected AND NOT PATCH AND NOT LIGHTCRAFTUNINSTALL" />
+        <Show Dialog="CleanUninstallDlg" After="MaintenanceWelcomeDlg"
+            Condition="Installed AND NOT RESUME AND NOT Preselected AND NOT PATCH AND LIGHTCRAFTUNINSTALL" />
+      </InstallUISequence>
 
       <!-- The folder InstallDirDlg edits. -->
       <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
@@ -146,10 +245,12 @@
       <!-- Maintenance: Welcome -> Repair / Remove -> Ready. -->
       <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />
       <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg" />
-      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="CleanUninstallDlg" />
       <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg" />
       <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2"
-          Condition="Installed AND NOT PATCH" />
+          Condition="Installed AND NOT PATCH AND WixUI_InstallMode&lt;&gt;&quot;Remove&quot;" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="CleanUninstallDlg" Order="4"
+          Condition="Installed AND NOT PATCH AND WixUI_InstallMode=&quot;Remove&quot;" />
 
       <!-- Completion page: optionally launch, then close. -->
       <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchLightcraft" Order="1"
@@ -178,6 +279,27 @@
 
       <Component Id="LightcraftCli">
         <File Id="LightcraftCliExe" Source="$(var.BinDir)\lightcraft-cli.exe" KeyPath="yes" />
+      </Component>
+
+      <!-- LightCraft's entry in Apps / Programs and Features (the product's own is hidden, see
+           ARPSYSTEMCOMPONENT). Uninstall runs the package in maintenance mode with full UI, opening
+           on the Remove pages; tools that uninstall silently use QuietUninstallString, which keeps
+           user data like every unattended removal. -->
+      <Component Id="LightcraftArpEntry">
+        <RegistryKey Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\LightCraft">
+          <RegistryValue Name="DisplayName" Value="LightCraft" Type="string" KeyPath="yes" />
+          <RegistryValue Name="DisplayVersion" Value="[ProductVersion]" Type="string" />
+          <RegistryValue Name="Publisher" Value="[Manufacturer]" Type="string" />
+          <RegistryValue Name="DisplayIcon" Value="[#LightcraftExe],0" Type="string" />
+          <RegistryValue Name="InstallLocation" Value="[INSTALLFOLDER]" Type="string" />
+          <RegistryValue Name="UninstallString" Value="MsiExec.exe /I[ProductCode] LIGHTCRAFTUNINSTALL=1" Type="string" />
+          <RegistryValue Name="QuietUninstallString" Value="MsiExec.exe /X[ProductCode] /qn" Type="string" />
+          <RegistryValue Name="URLInfoAbout" Value="[ARPURLINFOABOUT]" Type="string" />
+          <RegistryValue Name="URLUpdateInfo" Value="[ARPURLUPDATEINFO]" Type="string" />
+          <RegistryValue Name="HelpLink" Value="[ARPHELPLINK]" Type="string" />
+          <RegistryValue Name="NoModify" Value="1" Type="integer" />
+          <RegistryValue Name="NoRepair" Value="1" Type="integer" />
+        </RegistryKey>
       </Component>
     </ComponentGroup>
   </Fragment>

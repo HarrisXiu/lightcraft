@@ -468,6 +468,14 @@ Installers and executables are code-signed. The installer asks where to install 
 default; upgrades stay in the folder you chose) and ends on a page confirming LightCraft was installed, with an
 option to start it. For unattended installs: `msiexec /i lightcraft-<ver>-windows-x64.msi /qn INSTALLFOLDER="D:\Apps\LightCraft\"`.
 
+To uninstall, choose **Uninstall** for LightCraft in Windows Settings → Apps (or run the MSI again and
+choose **Remove**). Both open the same pages and confirm successful removal when finished.
+By default your photos, edits and settings are kept. You can choose **Clean settings, edits, library
+indexes and caches**, then separately choose to permanently delete photos copied into the affected
+libraries. Photo deletion is unchecked by default and cannot be undone; referenced photos outside
+their `Originals` folders are kept. See the [cleanup scope and troubleshooting](apps/lightcraft-uninstall/README.md).
+An unattended removal (`msiexec /x lightcraft-<ver>-windows-x64.msi /qn`) shows nothing and keeps all data.
+
 ### macOS
 
 | Build | File | Notes |

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WixLocalization xmlns="http://wixtoolset.org/schemas/v4/wxl" Culture="en-us">
+  <!-- Keep WiX's success/failure routing and replace only the success page's text. -->
+  <String Id="ExitDialogTitle" Value="{\WixUI_Font_Bigger}[LIGHTCRAFT_COMPLETIONTITLE]" />
+  <String Id="ExitDialogDescription" Value="[LIGHTCRAFT_COMPLETIONTEXT]" />
+</WixLocalization>

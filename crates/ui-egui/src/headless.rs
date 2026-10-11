@@ -3358,6 +3358,28 @@ mod tests {
     }
 
     #[test]
+    fn mouse_wheel_zooms_the_loupe_with_and_without_ctrl() {
+        use crate::state::Zoom;
+        let mut h = demo([1000.0, 700.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail", "right": "none", "leftPanel": false, "filmstrip": false}), t);
+        h.settle(SETTLE);
+        for (unit, y, modifiers) in [
+            (egui::MouseWheelUnit::Line, 1.0, egui::Modifiers::NONE),
+            (egui::MouseWheelUnit::Line, 1.0, egui::Modifiers::CTRL),
+            (egui::MouseWheelUnit::Point, 50.0, egui::Modifiers::CTRL),
+        ] {
+            h.request("ui.set", json!({"zoom": "fit", "pan": [0.5, 0.5]}), t);
+            h.request("ui.hoverWidget", json!({"id": "canvas:image"}), t);
+            h.app.synthetic.push(egui::Event::MouseWheel { unit, delta: egui::vec2(0.0, y), phase: egui::TouchPhase::Move, modifiers });
+            for _ in 0..10 {
+                h.step();
+            }
+            assert!(matches!(h.app.ui.zoom, Zoom::Percent(_)), "wheel {unit:?} {modifiers:?} must zoom in, got {:?}", h.app.ui.zoom);
+        }
+    }
+
+    #[test]
     fn trackpad_navigation_works_in_tools_compare_reference_and_before_after() {
         use crate::state::Zoom;
         let mut h = demo([1000.0, 700.0]);

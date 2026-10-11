@@ -90,10 +90,16 @@ struct Pen<'a> {
     r: Rect,
     s: Stroke,
     k: f32,
+    /// (cos, sin) of a turn about the grid's centre, clockwise on screen ([`paint_turned`]).
+    turn: Option<(f32, f32)>,
 }
 
 impl Pen<'_> {
     fn pt(&self, x: f32, y: f32) -> Pos2 {
+        let (x, y) = match self.turn {
+            Some((c, s)) => (10.0 + (x - 10.0) * c - (y - 10.0) * s, 10.0 + (x - 10.0) * s + (y - 10.0) * c),
+            None => (x, y),
+        };
         pos2(self.r.min.x + x * self.k, self.r.min.y + y * self.k)
     }
     fn line(&self, pts: &[(f32, f32)]) {
@@ -144,10 +150,20 @@ fn star_pts(cx: f32, cy: f32, r: f32) -> Vec<(f32, f32)> {
 
 /// Paint `icon` centred in `rect` (square area used) with `color`.
 pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
+    paint_with(p, rect, icon, color, None);
+}
+
+/// [`paint`], turned `radians` clockwise about its centre. Only for icons drawn with lines, arcs
+/// and circles (rectangles stay square to the screen).
+pub fn paint_turned(p: &Painter, rect: Rect, icon: Icon, color: Color32, radians: f32) {
+    paint_with(p, rect, icon, color, Some((radians.cos(), radians.sin())));
+}
+
+fn paint_with(p: &Painter, rect: Rect, icon: Icon, color: Color32, turn: Option<(f32, f32)>) {
     let side = rect.width().min(rect.height());
     let r = Rect::from_center_size(rect.center(), vec2(side, side));
     let k = side / 20.0;
-    let pen = Pen { p, r, s: Stroke::new((1.5 * k).max(1.0), color), k };
+    let pen = Pen { p, r, s: Stroke::new((1.5 * k).max(1.0), color), k, turn };
     use Icon::*;
     match icon {
         Sidebar => {

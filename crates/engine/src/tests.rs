@@ -37,6 +37,33 @@ fn changing_one_wb_control_resolves_as_shot_without_stale_tint() {
     }
 }
 
+/// Reset Edits on a raw goes back to its import defaults, capture sharpening and colour noise
+/// reduction included (#763: reset left both at 0 while import sets 40 / 25); a rendered file
+/// keeps none.
+#[test]
+fn reset_edits_restores_a_raws_import_defaults() {
+    use lightcraft_catalog::{Photo, PhotoId, Source};
+    use lightcraft_develop::DevelopSettings;
+    let mut s = demo();
+    for (id, format, raw) in [(200u64, "NEF", true), (201, "JPG", false)] {
+        let name = format!("p{id}.{format}");
+        let mut p = Photo::new(PhotoId(id), Source::File { path: name.clone() }, &name, format, 16, 16, "");
+        if raw {
+            p.as_shot_wb = Some((5200.0, 4.0));
+            p.develop = std::sync::Arc::new(DevelopSettings::for_raw(5200.0, 4.0));
+        }
+        s.catalog.apply(lightcraft_catalog::Op::AddPhoto { photo: Box::new(p) }).unwrap();
+    }
+    for (id, want) in [(200, (40.0, 25.0)), (201, (0.0, 0.0))] {
+        s.execute("library.select", &json!({"ids": [id], "active": id})).unwrap();
+        s.execute("develop.set", &json!({"control": "detail.sharpenAmount", "value": 90})).unwrap();
+        s.execute("develop.set", &json!({"control": "detail.nrColor", "value": 70})).unwrap();
+        s.execute("develop.reset", &json!({})).unwrap();
+        let d = active_dev(&s);
+        assert_eq!((d.detail.sharpen_amount, d.detail.nr_color), want, "photo {id}");
+    }
+}
+
 #[test]
 fn demo_library_loads() {
     let mut s = demo();

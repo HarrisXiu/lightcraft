@@ -18,7 +18,7 @@ it's missing or a different version.
 Build, then serve:
 
 ```sh
-cargo xtask web            # → <target>/web/{index.html, worker.js, lightcraft_web.js, lightcraft_web_bg.wasm}
+cargo xtask web            # → <target>/web-site/{index.html, worker.js, lightcraft_web.js, lightcraft_web_bg.wasm}
 cargo xtask web --serve    # build, then serve on http://127.0.0.1:8080/ (or `--serve 9000`)
 cargo xtask web --dev      # unoptimized build with debug info (faster to compile, slow to run)
 ```

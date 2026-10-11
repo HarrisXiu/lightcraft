@@ -42,15 +42,27 @@ mod tests_activity;
 #[cfg(test)]
 mod tests_album_picker;
 #[cfg(test)]
+mod tests_before_after;
+#[cfg(test)]
+mod tests_compare;
+#[cfg(test)]
+mod tests_copy_paste_dialogs;
+#[cfg(test)]
 mod tests_crop_rotate;
+#[cfg(test)]
+mod tests_crop_tool;
 #[cfg(test)]
 mod tests_curve;
 #[cfg(test)]
 mod tests_date_picker;
 #[cfg(test)]
+mod tests_dialogs;
+#[cfg(test)]
 mod tests_filmstrip;
 #[cfg(test)]
 mod tests_grid;
+#[cfg(test)]
+mod tests_info_dialogs;
 #[cfg(test)]
 mod tests_keymap;
 #[cfg(test)]
@@ -89,6 +101,8 @@ mod tests_sync;
 mod tests_titlebar;
 #[cfg(test)]
 mod tests_unsaved;
+#[cfg(test)]
+mod tests_wb_selector;
 #[cfg(test)]
 mod tests_zoom;
 #[cfg(test)]
@@ -230,6 +244,9 @@ pub struct LightcraftApp {
     /// The keyboard shortcuts editor is waiting for a key press for this command: no shortcut
     /// fires (the native menu bar drops its accelerators too) until it gets one or is cancelled.
     pub recording_shortcut: Option<String>,
+    /// A text field had the keyboard at the end of the last frame. egui drops the focus as Esc
+    /// arrives, before the shortcuts are read, so this is how Esc there stays the field's own.
+    pub text_focus: bool,
     /// The host is [`headless::Headless`] (it answers viewport screenshot commands itself).
     pub headless_host: bool,
     /// Warnings to show one at a time (damaged settings files…, issue #103).
@@ -342,6 +359,7 @@ impl LightcraftApp {
             native_menu: false,
             native_shortcuts: Default::default(),
             recording_shortcut: None,
+            text_focus: false,
             headless_host: false,
             notices: vec![],
             quit_prompt: None,
@@ -426,6 +444,21 @@ impl LightcraftApp {
             // Judge local adjustments on the photo, without the selection overlay obscuring them.
             // Keep it hidden after release; O / the overlay eye can show it again.
             self.ui.mask_overlay = false;
+        }
+        if r.is_ok() {
+            // These commands finish synchronously, so their completion would otherwise
+            // be invisible once the activity stack is gone. Never show success on error.
+            let completed = match id {
+                "library.compact" => Some(format!("✓ {}", i18n::tr("Optimize Library"))),
+                "library.clearPreviews" => Some(format!("✓ {}", i18n::tr("Clear Preview Cache"))),
+                "develop.autoSync" => Some(format!("{}: {}", i18n::tr("Auto Sync"), i18n::tr(if self.session.auto_sync { "On" } else { "Off" }))),
+                _ => None,
+            };
+            if let Some(message) = completed {
+                // Menu clicks can arrive before the next frame updates last_time.
+                let now = self.tasks.repaint.as_ref().map(|ctx| ctx.input(|i| i.time)).unwrap_or(self.last_time);
+                self.ui.toast = Some((message, now + TOAST_SECONDS, None));
+            }
         }
         if r.is_ok() && id == "photo.label" {
             let label = params.get("label").and_then(Value::as_str).and_then(lightcraft_catalog::ColorLabel::parse);
@@ -900,7 +933,7 @@ impl LightcraftApp {
             {
                 self.toast(ctx, e);
             }
-            let (presets, photos): (Vec<String>, Vec<String>) = dropped.into_iter().partition(|p| is_preset_file(p));
+            let (presets, photos) = split_presets(dropped);
             if !presets.is_empty() {
                 let _ = self.run("file.importPresets", serde_json::json!({"paths": presets}));
             }
@@ -1017,6 +1050,7 @@ impl LightcraftApp {
             ctx.request_repaint();
             return;
         }
+        panels::dialogs::prepare(self, ui);
         let t0 = now_ms();
         if std::mem::take(&mut self.ui.quit) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1054,6 +1088,7 @@ impl LightcraftApp {
         panels::keyword_list::drag_feedback(self, &ctx);
         panels::toast(self, &ctx);
         self.widgets = widgets::take_registry(&ctx);
+        self.text_focus = ctx.egui_wants_keyboard_input();
         self.end_frame(&ctx, t0);
     }
 }
@@ -1121,8 +1156,39 @@ pub fn is_preset_file(path: &str) -> bool {
     ["lcpreset", "lrtemplate", "xmp", "zip", "cube", "lmp", "mplumpack"].contains(&ext.as_str())
 }
 
+/// Splits dropped files into presets and everything else. An `.xmp` dropped next to a photo with the same
+/// name (`IMG_1.xmp` or `IMG_1.CR2.xmp` beside `IMG_1.CR2`) is that photo's sidecar, not a preset, and is left out.
+pub fn split_presets(dropped: Vec<String>) -> (Vec<String>, Vec<String>) {
+    let dir_of = |p: &str| std::path::Path::new(p).parent().map(|d| d.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let stem_of = |p: &str| std::path::Path::new(p).file_stem().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let name_of = |p: &str| std::path::Path::new(p).file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let is_xmp = |p: &str| std::path::Path::new(p).extension().is_some_and(|e| e.eq_ignore_ascii_case("xmp"));
+    let photo_names: Vec<(String, String)> =
+        dropped.iter().filter(|p| !is_preset_file(p)).flat_map(|p| [(dir_of(p), stem_of(p)), (dir_of(p), name_of(p))]).collect();
+    let (mut presets, mut photos) = (Vec::new(), Vec::new());
+    for p in dropped {
+        if !is_preset_file(&p) {
+            photos.push(p);
+        } else if is_xmp(&p) && photo_names.contains(&(dir_of(&p), stem_of(&p))) {
+            // a photo's sidecar travels with the photo
+        } else {
+            presets.push(p);
+        }
+    }
+    (presets, photos)
+}
+
 #[cfg(test)]
 mod drop_tests {
+    #[test]
+    fn photo_sidecars_are_not_presets() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let dropped = v(&["/a/IMG_1.CR2", "/a/IMG_1.xmp", "/a/IMG_2.jpg", "/a/IMG_2.jpg.XMP", "/a/Look.xmp", "/b/IMG_1.xmp"]);
+        let (presets, photos) = super::split_presets(dropped);
+        assert_eq!(photos, v(&["/a/IMG_1.CR2", "/a/IMG_2.jpg"]));
+        assert_eq!(presets, v(&["/a/Look.xmp", "/b/IMG_1.xmp"]));
+    }
+
     #[test]
     fn detection_results_are_summarised_in_words() {
         let r =

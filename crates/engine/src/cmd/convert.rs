@@ -122,6 +122,12 @@ pub fn specs() -> Vec<CommandSpec> {
 /// Edit in an external editor, the engine half: render the photo with its edits as a 16-bit
 /// TIFF next to the original (`<name>-Edit.tif`, never overwriting), add it to the library and
 /// stack it on top of the original. The host opens the file in the editor.
+///
+/// Every call makes a new copy, also when its bytes are those of a photo the library already has
+/// (the photo sent again after the editor was closed without saving, or an unedited edit copy sent
+/// on): the editor changes the file it is given, so handing it an existing one would change that
+/// photo, and an earlier copy can have been saved over since its hash was taken. A copy that
+/// can't be added is removed again.
 fn edit_external(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "photo.editExternal";
     let id = s.active().ok_or_else(|| bad(C, "no active photo"))?;
@@ -147,6 +153,16 @@ fn edit_external(s: &mut Session, p: &Value) -> Result<Value> {
         conflict: crate::export::Conflict::Unique,
         ..Default::default()
     };
+    // a name the library already has a photo for is taken, also when that photo's file is gone
+    let known: std::collections::HashSet<String> = s
+        .catalog
+        .photos()
+        .filter_map(|q| match &q.source {
+            Source::File { path } => Some(crate::import::normalize_import_path(path)),
+            Source::Demo { .. } => None,
+        })
+        .collect();
+    let taken = |path: &str| known.contains(&crate::import::normalize_import_path(path)) || Path::new(path).exists();
     let mut written = Vec::new();
     let mut write = |path: &str, bytes: &[u8]| -> std::result::Result<(), String> {
         // durable: the TIFF becomes a library photo the external editor then changes
@@ -155,14 +171,50 @@ fn edit_external(s: &mut Session, p: &Value) -> Result<Value> {
         Ok(())
     };
     let to = crate::export::Destination { dir, exact: None };
-    crate::export::export_batch(s, &[id], &opts, &to, &mut write, &|path| Path::new(path).exists()).map_err(|e| bad(C, e))?;
-    let out = written.into_iter().find(|w| w.ends_with(".tif")).ok_or_else(|| bad(C, "nothing was written"))?;
-    let r = s.execute("library.import", &json!({"paths": [out]}))?;
-    let new = r["imported"].get(0).and_then(Value::as_u64).ok_or_else(|| bad(C, "the edit copy could not be added"))?;
+    let exported = crate::export::export_batch(s, &[id], &opts, &to, &mut write, &taken);
+    let added = match exported {
+        Ok(_) => match written.iter().find(|w| w.ends_with(".tif")) {
+            Some(out) => add_edit_copy(s, out).map(|new| (out.clone(), new)).map_err(|why| {
+                let name = Path::new(out).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| out.clone());
+                format!("Couldn't add the edit copy {name} to the library: {why}")
+            }),
+            None => Err("Couldn't make the edit copy: nothing was written".to_string()),
+        },
+        Err(e) => Err(format!("Couldn't write the edit copy: {e}")),
+    };
+    let (out, new) = match added {
+        Ok(x) => x,
+        Err(msg) => {
+            // every file written here is new (a free name each): none may stay behind without a photo
+            let left: Vec<&str> = written.iter().filter(|w| std::fs::remove_file(w).is_err() && Path::new(w).exists()).map(String::as_str).collect();
+            let tail = match (written.is_empty(), left.is_empty()) {
+                (true, _) => String::new(),
+                (false, true) => ". The copy was removed again; the original is untouched".to_string(),
+                (false, false) => format!(". The copy could not be removed and is still at {}", left.join(", ")),
+            };
+            return Err(crate::EngineError::Other(format!("{msg}{tail}")));
+        }
+    };
     // stack: the edit on top of the original, expanded so both show
     let _ = s.execute("stack.group", &json!({"ids": [new, id.0], "top": new, "collapsed": false}));
     s.selection = crate::Selection::single(lightcraft_catalog::PhotoId(new));
     Ok(json!({"path": out, "id": new, "original": id.0}))
+}
+
+/// Add the edit copy just written at `path` as a photo of its own, whatever its bytes; `Err` says
+/// why it wasn't added.
+fn add_edit_copy(s: &mut Session, path: &str) -> std::result::Result<u64, String> {
+    let opts = crate::import::ImportOptions { allow_duplicates: true, ..Default::default() };
+    let report = crate::import::import_with(s, &[path.to_string()], &opts).map_err(|e| e.to_string())?;
+    if let Some(new) = report.imported.first() {
+        return Ok(*new);
+    }
+    Err(match (report.failed.first(), report.duplicates.first()) {
+        (Some((_, why)), _) => why.clone(),
+        (None, Some(d)) if d.existing_deleted => "the library has a photo for this file in Recently Deleted".to_string(),
+        (None, Some(_)) => "the library already has a photo for this file".to_string(),
+        (None, None) => "the file was not found again after writing it".to_string(),
+    })
 }
 
 /// The op that brings a photo up to date with what its file is now (`info`, a fresh probe), or
@@ -342,7 +394,7 @@ pub fn edit_specs() -> Vec<CommandSpec> {
             "Edit Copy for External Editor",
             [],
             None,
-            "{colorSpace?: adobeRgb (default) | proPhoto | displayP3 | srgb, dir?} — render the active photo with its edits as a 16-bit TIFF `<name>-Edit.tif` next to it, add it stacked on the original and select it → {path, id, original} (the app then opens it in the external editor)",
+            "{colorSpace?: adobeRgb (default) | proPhoto | displayP3 | srgb, dir?} — render the active photo with its edits as a 16-bit TIFF `<name>-Edit.tif` next to it (always a new file: `-Edit-2`, `-Edit-3`… when the name is taken, also when an earlier copy has the same bytes), add it stacked on the original and select it → {path, id, original} (the app then opens it in the external editor); a copy that can't be added is removed again",
             has_active,
             edit_external
         ),

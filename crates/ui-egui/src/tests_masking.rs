@@ -892,6 +892,20 @@ fn edit_in_external_editor_opens_the_copy() {
     assert_eq!(calls.len(), 1);
     assert!(calls[0].0.ends_with("-Edit.tif") && std::path::Path::new(&calls[0].0).exists(), "{calls:?}");
     assert_eq!(calls[0].1, "PhotoCraft");
+    let first = r["result"]["id"].as_u64().unwrap();
+    assert_eq!((h.app.ui.external_edits.clone(), h.app.session.active().map(|i| i.0)), (vec![first], Some(first)));
+    // again, on the copy itself (not edited here): its render has the copy's own bytes, and is
+    // still a new file and a new photo, the one the editor gets and the one reloaded afterwards
+    let r = h.request("engine.execute", json!({"command": "photo.editInExternal"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    let second = r["result"]["id"].as_u64().unwrap();
+    assert_ne!(second, first);
+    let calls = opened.lock().unwrap().clone();
+    assert_eq!(calls.len(), 2);
+    assert!(calls[1].0.ends_with("-Edit-Edit.tif") && std::path::Path::new(&calls[1].0).exists(), "{calls:?}");
+    assert_eq!(r["result"]["path"], json!(calls[1].0));
+    assert!(std::fs::read(&calls[0].0).unwrap() == std::fs::read(&calls[1].0).unwrap(), "the case under test: identical copies");
+    assert_eq!((h.app.ui.external_edits.clone(), h.app.session.active().map(|i| i.0)), (vec![first, second], Some(second)));
     let _ = std::fs::remove_dir_all(&dir);
     h.settle(SETTLE);
 }

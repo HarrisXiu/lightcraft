@@ -1,5 +1,15 @@
 # What's new in LightCraft
 
+## 2026-10-11
+
+### Edit in External Editor
+- Photo ▸ Edit in External Editor makes a new copy every time (`-Edit`, `-Edit-2`…). It used to fail with "the edit
+  copy could not be added", and leave the TIFF it had written on disk, when the new copy came out identical to one
+  already in the library: sending a photo again after closing the editor without saving, or sending an edit copy you
+  hadn't changed in LightCraft on to the editor.
+- A copy never takes the file name of a photo whose file is missing, and if a copy can't be added to the library the
+  file is removed again and the message says why.
+
 ## 2026-10-10
 
 ### Activity stack

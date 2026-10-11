@@ -566,6 +566,116 @@ fn external_edit_copy_is_stacked() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+fn file_names(dir: &Path) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+    v.sort();
+    v
+}
+
+/// Edit in External Editor twice on the same photo (the editor was closed without saving, so the
+/// first copy is untouched): the second copy has the same bytes as the first. It is still its own
+/// file and its own photo, not a duplicate the import skips.
+#[test]
+fn external_edit_copy_again_with_the_same_bytes() {
+    let dir = temp_dir("extedit-again");
+    let src = dir.join("beach.png");
+    write_png(&src, 9);
+    let mut s = Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    let orig = s.active().unwrap();
+    let r1 = s.execute("photo.editExternal", &json!({})).unwrap();
+    let first = PhotoId(r1["id"].as_u64().unwrap());
+    s.execute("library.select", &json!({"ids": [orig.0]})).unwrap();
+    let r2 = s.execute("photo.editExternal", &json!({})).unwrap();
+    let (p1, p2) = (r1["path"].as_str().unwrap(), r2["path"].as_str().unwrap());
+    assert!(p2.ends_with("beach-Edit-2.tif"), "{r2}");
+    assert!(std::fs::read(p1).unwrap() == std::fs::read(p2).unwrap(), "the case under test: identical copies");
+    let second = PhotoId(r2["id"].as_u64().unwrap());
+    assert!(second != first && second != orig, "{r2}");
+    assert_eq!(r2["original"], json!(orig.0));
+    assert_eq!(s.active(), Some(second));
+    let ph = s.catalog.photo(second).unwrap();
+    assert_eq!(ph.source, lightcraft_catalog::Source::File { path: p2.to_string() });
+    assert_eq!(ph.content_hash, s.catalog.photo(first).unwrap().content_hash, "its real hash: Reload must not see a change");
+    let st = s.catalog.stack_of(second).expect("stacked");
+    assert_eq!((st.top(), st.photos.contains(&orig), st.photos.contains(&first)), (second, true, true));
+    assert_eq!(s.execute("photo.reload", &json!({"ids": [first.0, second.0]})).unwrap()["reloaded"], json!([]));
+    assert_eq!(file_names(&dir), ["beach-Edit-2.tif", "beach-Edit.tif", "beach.png"]);
+    // an ordinary import still skips the same bytes
+    let other = dir.join("elsewhere.tif");
+    std::fs::copy(p1, &other).unwrap();
+    let r = s.execute("library.import", &json!({"paths": [other.to_string_lossy()]})).unwrap();
+    assert_eq!((r["imported"].as_array().unwrap().len(), r["duplicates"][0]["reason"].as_str()), (0, Some("content")), "{r}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Edit in External Editor on the edit copy itself, with no edits made to it in LightCraft: the
+/// render of the 16-bit TIFF can be that TIFF's own bytes again (it is for the demo library's
+/// active photo), and is still added as a new copy.
+#[test]
+fn external_edit_copy_of_an_unedited_edit_copy() {
+    let dir = temp_dir("extedit-chain");
+    let mut s = Session::with_demo().with_fs();
+    let r1 = s.execute("photo.editExternal", &json!({"dir": dir.to_string_lossy()})).unwrap();
+    let first = PhotoId(r1["id"].as_u64().unwrap());
+    assert_eq!(s.active(), Some(first));
+    let r2 = s.execute("photo.editExternal", &json!({})).unwrap();
+    let (p1, p2) = (r1["path"].as_str().unwrap(), r2["path"].as_str().unwrap());
+    assert!(p1.ends_with("-Edit.tif") && p2.ends_with("-Edit-Edit.tif"), "{p1} {p2}");
+    // (if renders stop round-tripping exactly, this no longer covers the case: pick another photo)
+    assert!(std::fs::read(p1).unwrap() == std::fs::read(p2).unwrap(), "the case under test: identical copies");
+    let second = PhotoId(r2["id"].as_u64().unwrap());
+    assert_ne!(second, first);
+    assert_eq!((r2["original"].clone(), s.active()), (json!(first.0), Some(second)));
+    let st = s.catalog.stack_of(second).expect("stacked");
+    assert_eq!((st.top(), st.photos.contains(&first)), (second, true));
+    assert_eq!(file_names(&dir).len(), 2, "{:?}", file_names(&dir));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An edit copy whose file was deleted outside LightCraft still owns its path in the library: the
+/// next copy takes another name instead of failing as "already imported from there".
+#[test]
+fn external_edit_copy_avoids_the_path_of_a_missing_photo() {
+    let dir = temp_dir("extedit-missing");
+    let src = dir.join("beach.png");
+    write_png(&src, 9);
+    let mut s = Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    let orig = s.active().unwrap();
+    let r1 = s.execute("photo.editExternal", &json!({})).unwrap();
+    std::fs::remove_file(r1["path"].as_str().unwrap()).unwrap();
+    s.execute("library.select", &json!({"ids": [orig.0]})).unwrap();
+    let r2 = s.execute("photo.editExternal", &json!({})).unwrap();
+    assert!(r2["path"].as_str().unwrap().ends_with("beach-Edit-2.tif"), "{r2}");
+    assert_ne!(r2["id"], r1["id"]);
+    assert_eq!(file_names(&dir), ["beach-Edit-2.tif", "beach.png"], "the missing photo's file is not recreated under it");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// When the edit copy can't be added to the library, the file written for it is removed and the
+/// error says what happened in words a person can read.
+#[test]
+fn external_edit_copy_that_cannot_be_added_leaves_no_file() {
+    let dir = temp_dir("extedit-fail");
+    let src = dir.join("beach.png");
+    write_png(&src, 9);
+    let mut s = Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    let orig = s.active().unwrap();
+    let before = s.catalog.len();
+    // the new TIFF can't be read back (a failing drive, a file removed by something else)
+    let fs = s.media.file_probe.clone().unwrap();
+    s.media.file_probe =
+        Some(std::sync::Arc::new(move |path: &str| if path.ends_with(".tif") { Err("unreadable (test)".to_string()) } else { fs(path) }));
+    let e = s.execute("photo.editExternal", &json!({})).unwrap_err().to_string();
+    assert!(e.contains("beach-Edit.tif") && e.contains("unreadable (test)") && e.contains("removed"), "{e}");
+    assert!(!e.contains("invalid parameters"), "{e}");
+    assert_eq!(file_names(&dir), ["beach.png"], "no orphan");
+    assert_eq!((s.catalog.len(), s.active()), (before, Some(orig)), "nothing added, the selection stays");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Reload: a file changed on disk (an external editor saved it) gets its new size / hash, the
 /// cached source is dropped and renders change; unchanged files are left alone.
 #[test]

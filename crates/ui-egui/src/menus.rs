@@ -1040,20 +1040,24 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             }
             let r = match app.session.execute("photo.editExternal", &params) {
                 Ok(r) => r,
-                Err(e) => return Some(Err(e.to_string())),
+                Err(e) => {
+                    // the menus and the shortcut drop a command's error: say why there is no copy
+                    let e = e.to_string();
+                    app.toast_error(&ctx, e.clone());
+                    return Some(Err(e));
+                }
             };
             let path = r["path"].as_str().unwrap_or_default().to_string();
             if let Some(id) = r["id"].as_u64() {
                 app.ui.external_edits.push(id);
             }
             let editor = p.get("app").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| app.ui.settings.external_editor.clone());
-            if let Some(f) = app.services.open_with.as_mut()
-                && let Err(e) = f(&path, &editor)
-            {
-                app.toast(&ctx, crate::i18n::tr_format!("Couldn't open the editor: {e}", e = e));
-            }
             let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-            app.toast(&ctx, crate::i18n::tr_format!("{name} opened for editing; it is stacked with the original", name = name));
+            // one toast shows at a time: a launch that failed must not read as "opened"
+            match app.services.open_with.as_mut().map(|f| f(&path, &editor)) {
+                Some(Err(e)) => app.toast_error(&ctx, crate::i18n::tr_format!("Couldn't open the editor: {e}", e = e)),
+                _ => app.toast(&ctx, crate::i18n::tr_format!("{name} opened for editing; it is stacked with the original", name = name)),
+            }
             Ok(r)
         }
         "dialog.cull" => {

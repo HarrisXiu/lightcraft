@@ -910,6 +910,75 @@ fn edit_in_external_editor_opens_the_copy() {
     h.settle(SETTLE);
 }
 
+/// An editor that can't be started is reported: "opened for editing" used to replace the error
+/// (one toast shows at a time), so a wrong editor in Settings looked like nothing happened.
+#[test]
+fn a_failed_editor_launch_is_reported() {
+    let dir = std::env::temp_dir().join(format!("lc-ui-ext-fail-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let services = Services { png: None, open_with: Some(Box::new(|_: &str, _: &str| Err("program not found".to_string()))), ..Default::default() };
+    let app = LightcraftApp::new(lightcraft_engine::Session::with_demo().with_fs(), services);
+    let mut h = Headless::new(app, [1200.0, 800.0], 1.0);
+    // no copy at all (a generated photo has no folder to put it in) says why
+    let r = h.request("engine.execute", json!({"command": "photo.editInExternal"}), T);
+    assert_eq!(r["ok"], false, "{r}");
+    let toast = h.app.ui.toast.clone().expect("toast").0;
+    assert!(toast.contains("no folder"), "{toast}");
+
+    let r = h.request("engine.execute", json!({"command": "photo.editInExternal", "params": {"dir": dir.to_string_lossy()}}), T);
+    assert_eq!(r["ok"], true, "the copy is made and stacked: {r}");
+    let toast = h.app.ui.toast.clone().expect("toast").0;
+    assert!(toast.contains("program not found") && !toast.contains("opened for editing"), "{toast}");
+    let _ = std::fs::remove_dir_all(&dir);
+    h.settle(SETTLE);
+}
+
+/// The photo context menu has Edit in External Editor (#918: it was in the Photo menu only).
+#[test]
+fn the_photo_context_menu_edits_in_the_external_editor() {
+    let dir = std::env::temp_dir().join(format!("lc-ui-ext-menu-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let img = lightcraft_raster::Rgba8 { width: 16, height: 12, data: vec![[200, 120, 40, 255]; 16 * 12] };
+    let png = lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default()).unwrap();
+    let file = dir.join("flower.png");
+    std::fs::write(&file, png).unwrap();
+    let img = lightcraft_raster::Rgba8 { width: 16, height: 12, data: vec![[40, 120, 200, 255]; 16 * 12] };
+    let png = lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default()).unwrap();
+    let other = dir.join("leaf.png");
+    std::fs::write(&other, png).unwrap();
+    let mut session = lightcraft_engine::Session::with_demo().with_fs();
+    let r = session.execute("library.import", &json!({"paths": [file.to_string_lossy(), other.to_string_lossy()]})).unwrap();
+    let (id, other) = (r["imported"][0].as_u64().expect("imported"), r["imported"][1].as_u64().expect("imported"));
+
+    let opened: std::sync::Arc<std::sync::Mutex<Vec<String>>> = Default::default();
+    let o = opened.clone();
+    let services = Services {
+        png: None,
+        open_with: Some(Box::new(move |path: &str, _: &str| {
+            o.lock().unwrap().push(path.to_string());
+            Ok(())
+        })),
+        ..Default::default()
+    };
+    let mut h = Headless::new(LightcraftApp::new(session, services), [1200.0, 800.0], 1.0);
+    // both selected, the other one active: the copy is of the photo that was right-clicked
+    exec(&mut h, "library.select", json!({"ids": [id, other], "active": other}));
+    let r = h.request("ui.set", json!({"view": "detail"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    for (widget, button) in [(format!("film:{id}"), "right"), ("ctx:photo.editInExternal".to_string(), "left")] {
+        let r = h.request("ui.clickWidget", json!({"id": widget, "button": button}), T);
+        assert_eq!(r["ok"], true, "{widget}: {r}");
+        h.settle(SETTLE);
+    }
+    let calls = opened.lock().unwrap().clone();
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert!(calls[0].ends_with("flower-Edit.tif") && std::path::Path::new(&calls[0]).exists(), "{calls:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn second_window_shows_the_active_photo() {
     let mut h = detail("panel.edit");

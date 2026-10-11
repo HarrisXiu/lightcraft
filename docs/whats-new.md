@@ -3,6 +3,14 @@
 ## 2026-10-11
 
 ### Edit in External Editor
+- Right-click a photo ▸ Edit in External Editor (issue #918): the command was in the Photo menu (⇧⌘E) only, so it
+  looked missing. It renders a 16-bit TIFF copy with your edits, stacks it with the original and opens it in the
+  editor set in Settings ▸ General, for example PhotoCraft. With several photos selected, the copy is of the photo
+  you right-clicked.
+- An editor program that can't be started now says so. "Opened for editing" used to replace the error, so a wrong
+  path in Settings looked like nothing happened. (Not caught yet: a wrong application name on macOS, which the
+  system reports only after the command has returned.) A copy that can't be made (a read-only folder, a full disk)
+  says why too, from the menu and the shortcut as well.
 - Photo ▸ Edit in External Editor makes a new copy every time (`-Edit`, `-Edit-2`…). It used to fail with "the edit
   copy could not be added", and leave the TIFF it had written on disk, when the new copy came out identical to one
   already in the library: sending a photo again after closing the editor without saving, or sending an edit copy you

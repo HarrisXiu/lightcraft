@@ -31,6 +31,14 @@
 - Settings ▸ General ▸ External Editing: the format (PSD or TIFF), colour space and bit depth for PhotoCraft and for
   the other editor (Edit in Other Editor, now ⌥⌘E), and where PhotoCraft is if you use a portable copy.
 - Export can write PSD too (flat, 8- or 16-bit).
+- Edit In makes a new copy every time (`-Edit`, `-Edit-2`…). It failed with "the edit copy could not be added", and
+  left the file it had written on disk, when the new copy came out identical to one already in the library: a
+  photo sent again after the editor was closed without saving, or an edit copy sent on unchanged. A copy that can't
+  be added to the library is removed again, and a copy never takes the file name of a photo whose file is missing.
+- With several photos selected, Edit In on a photo's right-click menu copies the photo you clicked, not the active one.
+- A copy that can't be made (a read-only folder, a full disk) says why; from a menu or the shortcut nothing happened.
+- Windows: PhotoCraft is found when it is installed in a folder whose name has characters outside English, such as
+  Chinese (the registry was read in the console's code page, which garbled the path).
 
 ## 2026-10-10
 

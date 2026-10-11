@@ -127,29 +127,75 @@ fn windows_candidates(install_dir: Option<String>, app_path: Option<String>, env
     out
 }
 
-/// A string value from the Windows registry (`reg query`; `None` = the key's default value).
+/// A string value from the Windows registry (`None` = the key's default value).
+///
+/// Read through `reg export`: the file it writes is UTF-16 whatever the system's code page,
+/// while `reg query` prints in the console's code page (GBK on a Chinese system, say), in
+/// which a folder name outside ASCII does not survive being read as UTF-8.
 fn reg_query(key: &str, name: Option<&str>) -> Option<String> {
-    let mut c = Command::new("reg");
-    c.args(["query", key]);
-    match name {
-        Some(n) => c.args(["/v", n]),
-        None => c.arg("/ve"),
-    };
+    let reg = std::env::var_os("SystemRoot").map(|r| PathBuf::from(r).join("System32").join("reg.exe")).filter(|p| p.is_file());
+    // (a name of its own each time: a file an earlier run could not delete must not be in the way)
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let file = std::env::temp_dir().join(format!("lightcraft-reg-{}-{stamp}.reg", std::process::id()));
+    let mut c = Command::new(reg.as_deref().unwrap_or(Path::new("reg")));
+    c.args(["export", key]).arg(&file).arg("/y");
+    c.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         c.creation_flags(CREATE_NO_WINDOW);
     }
-    let out = c.output().ok().filter(|o| o.status.success())?;
-    reg_value(&String::from_utf8_lossy(&out.stdout))
+    let bytes = if finishes_in_time(&mut c, HELPER_DEADLINE) { std::fs::read(&file).ok() } else { None };
+    let _ = std::fs::remove_file(&file);
+    reg_value(&bytes?, name)
 }
 
-/// The value in `reg query` output: the text after `REG_SZ` (or `REG_EXPAND_SZ`) on its line.
-fn reg_value(output: &str) -> Option<String> {
-    output.lines().find_map(|l| {
-        let (_, v) = l.split_once("REG_EXPAND_SZ").or_else(|| l.split_once("REG_SZ"))?;
-        Some(v.trim().to_string()).filter(|v| !v.is_empty())
+/// How long the registry helper may take. It is asked on the UI thread and answers in a few
+/// tens of milliseconds; one that hangs (a temporary folder on a dead network share) is given
+/// up on.
+const HELPER_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Run `command` and say whether it succeeded within `deadline`; one still running then is
+/// killed.
+fn finishes_in_time(command: &mut Command, deadline: std::time::Duration) -> bool {
+    let Ok(mut child) = command.spawn() else { return false };
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) if started.elapsed() < deadline => std::thread::sleep(std::time::Duration::from_millis(5)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
+}
+
+/// The string value `name` (`None` = the key's default value, written `@`) in a `reg export`
+/// file: UTF-16LE text with one `"name"="value"` line per value, `\` and `"` escaped with a
+/// backslash. Other kinds of value (`hex(2):…`, `dword:…`) are not read.
+fn reg_value(bytes: &[u8], name: Option<&str>) -> Option<String> {
+    let units: Vec<u16> = bytes.chunks_exact(2).filter_map(|c| <[u8; 2]>::try_from(c).ok()).map(u16::from_le_bytes).collect();
+    let text = String::from_utf16_lossy(&units);
+    text.lines().map(|l| l.trim_start_matches('\u{feff}').trim()).find_map(|line| {
+        let rest = match name {
+            None => line.strip_prefix("@=")?,
+            Some(name) => {
+                let (key, rest) = line.strip_prefix('"')?.split_once("\"=")?;
+                key.eq_ignore_ascii_case(name).then_some(rest)?
+            }
+        };
+        let body = rest.strip_prefix('"')?.strip_suffix('"')?;
+        let mut value = String::with_capacity(body.len());
+        let mut chars = body.chars();
+        while let Some(c) = chars.next() {
+            value.push(if c == '\\' { chars.next()? } else { c });
+        }
+        let value = value.trim();
+        (!value.is_empty()).then(|| value.to_string())
     })
 }
 
@@ -207,13 +253,64 @@ mod tests {
         assert_eq!(c.len(), 4);
     }
 
+    /// A `reg export` file as Windows writes it: UTF-16LE with a byte order mark and CRLF.
+    fn reg_file(text: &str) -> Vec<u8> {
+        let mut bytes = vec![0xff, 0xfe];
+        bytes.extend(text.replace('\n', "\r\n").encode_utf16().flat_map(u16::to_le_bytes));
+        bytes
+    }
+
     #[test]
-    fn reg_query_output_is_read() {
-        let out = "\r\nHKEY_LOCAL_MACHINE\\Software\\PhotoCraft\r\n    InstallDir    REG_SZ    C:\\Program Files\\PhotoCraft\\\r\n\r\n";
-        assert_eq!(reg_value(out).as_deref(), Some(r"C:\Program Files\PhotoCraft\"));
-        let default = "\r\nHKEY_LOCAL_MACHINE\\...\\photocraft.exe\r\n    (Default)    REG_SZ    C:\\Program Files\\PhotoCraft\\photocraft.exe\r\n";
-        assert_eq!(reg_value(default).as_deref(), Some(r"C:\Program Files\PhotoCraft\photocraft.exe"));
-        assert_eq!(reg_value("ERROR: The system was unable to find the specified registry key or value."), None);
+    fn a_reg_export_is_read() {
+        let install = reg_file(
+            "Windows Registry Editor Version 5.00\n\n[HKEY_LOCAL_MACHINE\\Software\\PhotoCraft]\n\"InstallDir\"=\"C:\\\\Program Files\\\\PhotoCraft\\\\\"\n\n",
+        );
+        assert_eq!(reg_value(&install, Some("InstallDir")).as_deref(), Some(r"C:\Program Files\PhotoCraft\"));
+        assert_eq!(reg_value(&install, Some("installdir")).as_deref(), Some(r"C:\Program Files\PhotoCraft\"), "names ignore case");
+        assert_eq!(reg_value(&install, Some("Version")), None);
+        assert_eq!(reg_value(&install, None), None, "no default value");
+        let key = "[HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\photocraft.exe]";
+        let default =
+            reg_file(&format!("{key}\n@=\"C:\\\\Program Files\\\\PhotoCraft\\\\photocraft.exe\"\n\"Path\"=\"C:\\\\Program Files\\\\PhotoCraft\"\n"));
+        assert_eq!(reg_value(&default, None).as_deref(), Some(r"C:\Program Files\PhotoCraft\photocraft.exe"));
+        assert_eq!(reg_value(&default, Some("Path")).as_deref(), Some(r"C:\Program Files\PhotoCraft"));
+        // a folder name outside ASCII: what `reg query`'s console-code-page output lost
+        let chinese = reg_file(&format!("{key}\n@=\"D:\\\\软件\\\\PhotoCraft\\\\photocraft.exe\"\n"));
+        assert_eq!(reg_value(&chinese, None).as_deref(), Some(r"D:\软件\PhotoCraft\photocraft.exe"));
+    }
+
+    /// Whatever the file holds, the answer is a value or none: never a panic.
+    #[test]
+    fn a_reg_export_without_a_usable_value_gives_none() {
+        for text in [
+            "",
+            "[HKEY_LOCAL_MACHINE\\Software\\PhotoCraft]\n",
+            "@=\"\"\n",
+            "@=\"C:\\\\a.exe\n",
+            "@=\"C:\\\\a\\\"\n",
+            "@=hex(2):43,00\n",
+            "@=dword:00000001\n",
+            "\"InstallDir\n",
+            "\"InstallDir\"=\n",
+        ] {
+            assert_eq!(reg_value(&reg_file(text), None), None, "{text:?}");
+            assert_eq!(reg_value(&reg_file(text), Some("InstallDir")), None, "{text:?}");
+        }
+        // not UTF-16 at all, an odd number of bytes, a lone surrogate
+        assert_eq!(reg_value(b"@=\"C:\\\\a.exe\"", None), None);
+        assert_eq!(reg_value(&[0xff, 0xfe, 0x40], None), None);
+        assert_eq!(reg_value(&[0xff, 0xfe, 0x00, 0xd8], None), None);
+    }
+
+    /// A helper that can't be started counts as not finished: never a hang or a panic.
+    #[test]
+    fn a_helper_that_cannot_run_is_given_up_on() {
+        let mut missing = Command::new(std::env::temp_dir().join("lightcraft-no-such-helper"));
+        assert!(!finishes_in_time(&mut missing, HELPER_DEADLINE));
+        // the test binary itself, asked for a test that doesn't exist: runs, and exits quickly
+        let mut quick = Command::new(std::env::current_exe().unwrap());
+        quick.args(["--list", "--exact", "no::such::test"]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+        assert!(finishes_in_time(&mut quick, std::time::Duration::from_secs(60)));
     }
 
     #[test]

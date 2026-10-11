@@ -109,6 +109,10 @@ pub struct ImportOptions {
     pub metadata_preset: Option<String>,
     /// Copy: raws are copied as DNG (Copy as DNG).
     pub convert_dng: bool,
+    /// A file with the same bytes as a photo already in the library is added all the same. For
+    /// files LightCraft itself just wrote as a photo of their own (the copy for an external
+    /// editor, which that editor is about to change); `library.import` doesn't offer it.
+    pub allow_duplicates: bool,
 }
 
 /// How copies are filed in the destination. The date is the capture time, else the time of the
@@ -758,7 +762,8 @@ impl Prepared {
     }
 }
 
-fn normalize_import_path(path: &str) -> String {
+/// A path as imports compare it: one kind of separator, and no case where the file system has none.
+pub(crate) fn normalize_import_path(path: &str) -> String {
     let path = path.replace('\\', "/");
     if cfg!(windows) { path.to_lowercase() } else { path }
 }
@@ -898,7 +903,8 @@ impl ImportJob {
                 }
             };
             // a copy of a file whose transfer is still pending: a duplicate only if that one succeeds
-            if !opts.local
+            let dedupe = !opts.local && !opts.allow_duplicates;
+            if dedupe
                 && let Some(h) = &info.content_hash
                 && plan.transfers.iter().any(|t| t.info.content_hash.as_ref() == Some(h))
             {
@@ -908,7 +914,7 @@ impl ImportJob {
                 }
             }
             if let Some(h) = &info.content_hash
-                && !opts.local
+                && dedupe
                 && let Some(existing) = self.by_hash.get(h)
             {
                 self.done.fetch_add(1, Relaxed);
